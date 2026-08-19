@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
  * インストール処理のバージョン。スキーマや管理対象の固定ページを変更したら必ず上げる。
  * 上げると次に wp-admin を開いた時点で ssb_install() が再実行される。
  */
-define( 'SSB_DB_VERSION', '1.4.0' );
+define( 'SSB_DB_VERSION', '1.5.0' );
 
 /**
  * バージョンを保存するオプション名.
@@ -221,6 +221,15 @@ function ssb_get_managed_pages() {
 			'title'    => '講師マイページ',
 			'template' => 'page-mypage.php',
 		),
+		// 親を先に定義しておくこと（作成順にそのまま使う）。
+		'booking' => array(
+			'title'    => '予約',
+			'template' => '',
+		),
+		'booking/done' => array(
+			'title'    => '予約完了',
+			'template' => 'page-checkout-done.php',
+		),
 	);
 }
 
@@ -233,15 +242,32 @@ function ssb_get_managed_pages() {
  * @return void
  */
 function ssb_install_pages() {
-	foreach ( ssb_get_managed_pages() as $slug => $page ) {
-		if ( ssb_get_page_by_slug( $slug ) ) {
+	foreach ( ssb_get_managed_pages() as $path => $page ) {
+		if ( ssb_get_page_by_slug( $path ) ) {
 			continue;
+		}
+
+		// 'booking/done' のような入れ子は、親を引いてから子として作る。
+		$slug   = $path;
+		$parent = 0;
+
+		if ( false !== strpos( $path, '/' ) ) {
+			$parts       = explode( '/', $path );
+			$slug        = array_pop( $parts );
+			$parent_page = ssb_get_page_by_slug( implode( '/', $parts ) );
+
+			if ( ! $parent_page ) {
+				continue;
+			}
+
+			$parent = $parent_page->ID;
 		}
 
 		wp_insert_post(
 			array(
 				'post_type'      => 'page',
 				'post_name'      => $slug,
+				'post_parent'    => $parent,
 				'post_title'     => $page['title'],
 				'post_status'    => 'publish',
 				'post_content'   => '',

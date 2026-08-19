@@ -874,3 +874,81 @@ function ssb_ajax_refresh_slots() {
 }
 add_action( 'wp_ajax_ssb_refresh_slots', 'ssb_ajax_refresh_slots' );
 add_action( 'wp_ajax_nopriv_ssb_refresh_slots', 'ssb_ajax_refresh_slots' );
+
+/**
+ * 枠が指定のトークンで仮押さえされているかを返す.
+ *
+ * トークンの比較は hash_equals() で行う。
+ *
+ * @param object|null $slot  枠レコード。
+ * @param string      $token 仮押さえトークン。
+ * @return bool
+ */
+function ssb_slot_holds_token( $slot, $token ) {
+	if ( ! $slot || 'held' !== $slot->status || '' === (string) $token ) {
+		return false;
+	}
+
+	return hash_equals( (string) $slot->hold_token, (string) $token );
+}
+
+/**
+ * 仮押さえの期限を延長する.
+ *
+ * Checkout セッションの有効期限（最短30分）に合わせて伸ばすために使う。
+ *
+ * @param int    $slot_id 枠ID。
+ * @param string $token   仮押さえトークン。
+ * @param int    $minutes 現在時刻から何分後まで保つか。
+ * @return bool
+ */
+function ssb_extend_hold( $slot_id, $token, $minutes ) {
+	global $wpdb;
+
+	$slot = ssb_get_slot( $slot_id );
+
+	if ( ! ssb_slot_holds_token( $slot, $token ) ) {
+		return false;
+	}
+
+	$expires = ( new DateTimeImmutable( current_time( 'mysql' ), wp_timezone() ) )
+		->modify( '+' . (int) $minutes . ' minutes' )
+		->format( 'Y-m-d H:i:s' );
+
+	$wpdb->update(
+		ssb_table( 'slots' ),
+		array( 'hold_expires_at' => $expires ),
+		array( 'id' => (int) $slot_id ),
+		array( '%s' ),
+		array( '%d' )
+	);
+
+	return true;
+}
+
+/**
+ * 枠を予約済みにする.
+ *
+ * トークンが一致する仮押さえだけを確定させる。Webhook から呼ぶ。
+ *
+ * @param int    $slot_id 枠ID。
+ * @param string $token   仮押さえトークン。
+ * @return bool
+ */
+function ssb_mark_slot_booked( $slot_id, $token ) {
+	global $wpdb;
+
+	$slots = ssb_table( 'slots' );
+
+	$updated = $wpdb->query(
+		$wpdb->prepare(
+			"UPDATE `{$slots}`
+			SET status = 'booked', hold_expires_at = NULL
+			WHERE id = %d AND status = 'held' AND hold_token = %s",
+			(int) $slot_id,
+			(string) $token
+		)
+	);
+
+	return (bool) $updated;
+}

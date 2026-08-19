@@ -103,8 +103,8 @@ SPEC.md「7. 実装順序」に従って上から進める。
 - [x] 5. 予約枠の一括登録
 - [x] 6. 講座詳細ページのカレンダー表示
 - [x] 7. 仮押さえ＋入力フォーム
-- [ ] 8. Stripe Checkout 連携
-- [ ] 9. Webhook による予約確定
+- [x] 8. Stripe Checkout 連携
+- [x] 9. Webhook による予約確定
 - [ ] 10. メール送信（`.ics` 添付含む）
 - [ ] 11. Googleカレンダー ICS 読み取り・除外表示
 - [ ] 12. 管理画面の予約一覧・売上集計
@@ -124,3 +124,13 @@ SPEC.md「7. 実装順序」に従って上から進める。
 - **ログイン画面**：`wp-login.php` は使わず `/login` の独自画面で受ける。
 - **講座のイメージ画像**：`wp_ssb_courses.image_id` に添付IDで持つ。講師には `upload_files` 権限を
   与えず、`inc/booking/course.php` 側で MIME とサイズを検証してから `media_handle_upload()` に渡す。
+- **Stripe ライブラリ**：この開発機に Composer が入っていないため、公式 SDK は導入せず
+  `wp_remote_post()` で API を呼び、Webhook の署名検証も自前で実装している
+  （SPEC 4.6 が Composer 不可の場合の代替として認めている方式）。
+  署名検証は `hash_hmac('sha256', "{timestamp}.{payload}")` を `hash_equals()` で比較し、
+  タイムスタンプの許容ずれを 300 秒としている。Composer を入れる場合は
+  `inc/booking/stripe.php` の `ssb_stripe_post()` と
+  `inc/booking/webhook.php` の `ssb_verify_stripe_signature()` を差し替えれば移行できる。
+- **仮押さえの延長**：Checkout セッションは 32 分、仮押さえは 35 分にしている。
+  Stripe の最短有効期限が 30 分であることと、決済がぎりぎりで完了しても
+  枠が空いていない状態を避けるため、仮押さえをセッションより長く保つ。

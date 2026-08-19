@@ -27,6 +27,10 @@ if ( ! $ssb_course ) {
 
 $ssb_image = ssb_course_image_url( $ssb_course, 'large' );
 
+// 決済の開始に失敗したときのメッセージ。
+$ssb_flash  = ssb_flash_take();
+$ssb_errors = isset( $ssb_flash['errors'] ) ? (array) $ssb_flash['errors'] : array();
+
 get_header();
 ?>
 
@@ -78,6 +82,16 @@ get_header();
 	<section class="ssb-section">
 		<h2 class="ssb-section__title">予約</h2>
 
+		<?php if ( $ssb_errors ) : ?>
+			<div class="ssb-notice ssb-notice--error">
+				<ul>
+					<?php foreach ( $ssb_errors as $ssb_error ) : ?>
+						<li><?php echo esc_html( $ssb_error ); ?></li>
+					<?php endforeach; ?>
+				</ul>
+			</div>
+		<?php endif; ?>
+
 		<div id="ssb-calendar-message" class="ssb-notice ssb-notice--error" role="alert" hidden></div>
 
 		<div id="ssb-calendar" class="ssb-calendar">
@@ -125,12 +139,12 @@ get_header();
 				</div>
 
 				<p class="ssb-booking__actions">
-					<button type="submit" class="ssb-button" disabled>この内容で予約に進む</button>
+					<button type="submit" class="ssb-button">カード決済へ進む</button>
 					<button type="button" class="ssb-button ssb-button--secondary" id="ssb-booking-cancel">選択をやめる</button>
 				</p>
 
 				<p class="ssb-muted" style="font-size:0.85rem;">
-					カード決済への接続は準備中です。次の実装で有効になります。
+					次の画面でカード情報をご入力ください。決済が完了すると予約が確定します。
 				</p>
 			</form>
 		</div>

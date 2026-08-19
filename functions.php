@@ -89,13 +89,15 @@ function ssb_template_include( $template ) {
 	}
 
 	$pages = ssb_get_managed_pages();
-	$slug  = (string) get_post_field( 'post_name', get_queried_object_id() );
 
-	if ( empty( $pages[ $slug ]['template'] ) ) {
+	// 'booking/done' のような入れ子も引けるよう、スラッグではなくパスで照合する。
+	$page_path = (string) get_page_uri( get_queried_object_id() );
+
+	if ( empty( $pages[ $page_path ]['template'] ) ) {
 		return $template;
 	}
 
-	$path = SSB_PATH . '/templates/' . $pages[ $slug ]['template'];
+	$path = SSB_PATH . '/templates/' . $pages[ $page_path ]['template'];
 
 	return file_exists( $path ) ? $path : $template;
 }
