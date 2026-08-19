@@ -39,6 +39,10 @@ $ssb_msg = isset( $_GET['ssb_msg'] ) ? sanitize_key( wp_unslash( $_GET['ssb_msg'
 $ssb_created = isset( $_GET['created'] ) ? absint( wp_unslash( $_GET['created'] ) ) : 0;
 $ssb_skipped = isset( $_GET['skipped'] ) ? absint( wp_unslash( $_GET['skipped'] ) ) : 0;
 
+// 一括削除の結果（件数）。skipped は生成・削除で共通のキーを使う。
+$ssb_deleted     = isset( $_GET['deleted'] ) ? absint( wp_unslash( $_GET['deleted'] ) ) : 0;
+$ssb_skipped_del = $ssb_skipped;
+
 $ssb_notices = array(
 	'profile_saved'      => array( 'success', 'プロフィールを保存しました。' ),
 	'course_created'     => array( 'success', '講座を作成しました。' ),
@@ -51,11 +55,7 @@ $ssb_notices = array(
 	'ssb_course_has_bookings'     => array( 'error', '決済済みの予約があるため、この講座は削除できません。' ),
 	'ssb_course_not_found'        => array( 'error', '対象の講座が見つかりません。' ),
 	'ssb_course_delete_failed'    => array( 'error', '講座の削除に失敗しました。' ),
-	'slot_deleted'           => array( 'success', '予約枠を削除しました。' ),
-	'slot_forbidden'         => array( 'error', '対象の予約枠が見つかりません。' ),
-	'ssb_slot_locked'        => array( 'error', '予約済み・仮押さえ中の枠は削除できません。' ),
-	'ssb_slot_not_found'     => array( 'error', '対象の予約枠が見つかりません。' ),
-	'ssb_slot_delete_failed' => array( 'error', '予約枠の削除に失敗しました。' ),
+	'slots_none_selected' => array( 'error', '削除する枠が選択されていません。' ),
 	'error'              => array( 'error', '処理できませんでした。' ),
 );
 
@@ -72,6 +72,17 @@ get_header();
 		</a>
 	<?php endforeach; ?>
 </nav>
+
+<?php if ( 'slots_deleted' === $ssb_msg ) : ?>
+	<div class="ssb-notice ssb-notice--success">
+		<p>
+			予約枠を <?php echo esc_html( (string) $ssb_deleted ); ?> 件削除しました。
+			<?php if ( $ssb_skipped_del > 0 ) : ?>
+				<span class="ssb-muted">（予約済み・仮押さえ中などのため <?php echo esc_html( (string) $ssb_skipped_del ); ?> 件は削除していません）</span>
+			<?php endif; ?>
+		</p>
+	</div>
+<?php endif; ?>
 
 <?php if ( 'slots_generated' === $ssb_msg ) : ?>
 	<div class="ssb-notice ssb-notice--success">
@@ -412,20 +423,62 @@ get_header();
 	<?php endif; ?>
 
 	<?php
+	$ssb_filter_course = isset( $_GET['course'] ) ? absint( wp_unslash( $_GET['course'] ) ) : 0;
+
+	// 絞り込み対象が自分の講座かどうかを必ず確認する。
+	if ( $ssb_filter_course && ! ssb_get_own_course( $ssb_filter_course, $ssb_me->id ) ) {
+		$ssb_filter_course = 0;
+	}
+
 	$ssb_slots = ssb_get_slots_by_instructor( $ssb_me->id, current_time( 'mysql' ) );
-	$ssb_counts = array_fill_keys( array_keys( ssb_slot_statuses() ), 0 );
+
+	if ( $ssb_filter_course ) {
+		$ssb_slots = array_values(
+			array_filter(
+				$ssb_slots,
+				static function ( $slot ) use ( $ssb_filter_course ) {
+					return (int) $slot->course_id === $ssb_filter_course;
+				}
+			)
+		);
+	}
+
+	$ssb_counts    = array_fill_keys( array_keys( ssb_slot_statuses() ), 0 );
+	$ssb_deletable = 0;
 
 	foreach ( $ssb_slots as $ssb_slot ) {
 		if ( isset( $ssb_counts[ $ssb_slot->status ] ) ) {
 			$ssb_counts[ $ssb_slot->status ]++;
+		}
+
+		if ( in_array( $ssb_slot->status, array( 'open', 'closed' ), true ) ) {
+			$ssb_deletable++;
 		}
 	}
 	?>
 
 	<h2 class="ssb-section__title">これからの予約枠</h2>
 
+	<?php if ( $ssb_my_courses ) : ?>
+		<form method="get" action="<?php echo esc_url( ssb_mypage_url() ); ?>" class="ssb-slotfilter">
+			<input type="hidden" name="tab" value="slots">
+			<label for="ssb-slot-filter">講座で絞り込む</label>
+			<select class="ssb-select" id="ssb-slot-filter" name="course">
+				<option value="0">すべての講座</option>
+				<?php foreach ( $ssb_my_courses as $ssb_c ) : ?>
+					<option value="<?php echo esc_attr( (string) $ssb_c->id ); ?>" <?php selected( $ssb_filter_course, (int) $ssb_c->id ); ?>>
+						<?php echo esc_html( $ssb_c->title ); ?>
+					</option>
+				<?php endforeach; ?>
+			</select>
+			<button type="submit" class="ssb-button ssb-button--secondary">絞り込む</button>
+		</form>
+	<?php endif; ?>
+
 	<?php if ( ! $ssb_slots ) : ?>
-		<p class="ssb-muted">これからの予約枠はまだありません。</p>
+
+		<p class="ssb-muted">これからの予約枠はありません。</p>
+
 	<?php else : ?>
 
 		<p class="ssb-muted">
@@ -437,41 +490,79 @@ get_header();
 			<?php endforeach; ?>
 		</p>
 
-		<table class="ssb-table">
-			<thead>
-				<tr>
-					<th scope="col">日時</th>
-					<th scope="col">講座</th>
-					<th scope="col">状態</th>
-					<th scope="col">操作</th>
-				</tr>
-			</thead>
-			<tbody>
-				<?php foreach ( $ssb_slots as $ssb_slot ) : ?>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+			<?php wp_nonce_field( 'ssb_bulk_delete_slots', 'ssb_bulk_slots_nonce' ); ?>
+			<input type="hidden" name="action" value="ssb_bulk_delete_slots">
+			<input type="hidden" name="filter_course" value="<?php echo esc_attr( (string) $ssb_filter_course ); ?>">
+
+			<table class="ssb-table">
+				<thead>
 					<tr>
-						<td>
-							<?php echo esc_html( mysql2date( 'Y/n/j (D) H:i', $ssb_slot->start_at ) ); ?>
-							–
-							<?php echo esc_html( mysql2date( 'H:i', $ssb_slot->end_at ) ); ?>
-						</td>
-						<td><?php echo esc_html( $ssb_slot->course_title ); ?></td>
-						<td><?php echo esc_html( ssb_slot_status_label( $ssb_slot->status ) ); ?></td>
-						<td>
-							<?php if ( in_array( $ssb_slot->status, array( 'open', 'closed' ), true ) ) : ?>
-								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;">
-									<?php wp_nonce_field( 'ssb_delete_slot', 'ssb_slot_nonce' ); ?>
-									<input type="hidden" name="action" value="ssb_delete_slot">
-									<input type="hidden" name="slot_id" value="<?php echo esc_attr( (string) $ssb_slot->id ); ?>">
-									<button type="submit" class="ssb-button ssb-button--secondary">削除</button>
-								</form>
-							<?php else : ?>
-								<span class="ssb-muted">—</span>
-							<?php endif; ?>
-						</td>
+						<th scope="col" style="width:36px;">
+							<input type="checkbox" id="ssb-check-all" aria-label="表示中の枠をすべて選択">
+						</th>
+						<th scope="col">日時</th>
+						<th scope="col">講座</th>
+						<th scope="col">状態</th>
 					</tr>
-				<?php endforeach; ?>
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					<?php foreach ( $ssb_slots as $ssb_slot ) : ?>
+						<?php $ssb_can_delete = in_array( $ssb_slot->status, array( 'open', 'closed' ), true ); ?>
+						<tr>
+							<td>
+								<input type="checkbox" class="ssb-slot-check" name="slot_ids[]"
+									value="<?php echo esc_attr( (string) $ssb_slot->id ); ?>"
+									<?php disabled( ! $ssb_can_delete ); ?>
+									aria-label="この枠を選択">
+							</td>
+							<td>
+								<?php echo esc_html( mysql2date( 'Y/n/j (D) H:i', $ssb_slot->start_at ) ); ?>
+								–
+								<?php echo esc_html( mysql2date( 'H:i', $ssb_slot->end_at ) ); ?>
+							</td>
+							<td><?php echo esc_html( $ssb_slot->course_title ); ?></td>
+							<td><?php echo esc_html( ssb_slot_status_label( $ssb_slot->status ) ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+
+			<p class="ssb-slotactions">
+				<button type="submit" name="mode" value="selected" class="ssb-button ssb-button--secondary">
+					選択した枠を削除
+				</button>
+
+				<?php if ( $ssb_deletable > 0 ) : ?>
+					<button type="submit" name="mode" value="all" class="ssb-button ssb-button--secondary"
+						onclick="return confirm('表示中の削除できる枠 <?php echo esc_js( (string) $ssb_deletable ); ?> 件をまとめて削除します。\nよろしいですか？');">
+						表示中の枠をすべて削除（<?php echo esc_html( (string) $ssb_deletable ); ?>件）
+					</button>
+				<?php endif; ?>
+			</p>
+
+			<p class="ssb-muted" style="font-size:0.85rem;">
+				予約済み・仮押さえ中の枠は選択できません。削除の対象にもなりません。
+			</p>
+		</form>
+
+		<script>
+		( function () {
+			var all = document.getElementById( 'ssb-check-all' );
+
+			if ( ! all ) {
+				return;
+			}
+
+			all.addEventListener( 'change', function () {
+				var boxes = document.querySelectorAll( '.ssb-slot-check:not(:disabled)' );
+
+				Array.prototype.forEach.call( boxes, function ( box ) {
+					box.checked = all.checked;
+				} );
+			} );
+		} )();
+		</script>
 
 	<?php endif; ?>
 

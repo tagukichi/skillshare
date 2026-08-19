@@ -585,3 +585,26 @@ img {
 	margin: 12px 0 0;
 	font-size: 0.85rem;
 }
+
+/* Slot list controls ------------------------------------------------------ */
+
+.ssb-slotfilter {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 16px;
+	font-size: 0.9rem;
+}
+
+.ssb-slotfilter .ssb-select {
+	width: auto;
+	max-width: 320px;
+}
+
+.ssb-slotactions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 16px;
+}

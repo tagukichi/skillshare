@@ -215,36 +215,6 @@ function ssb_insert_slot( $course_id, $start_at, $end_at ) {
 	return $ok ? (int) $wpdb->insert_id : 0;
 }
 
-/**
- * 枠を削除する.
- *
- * 予約済み・仮押さえ中の枠は消させない。
- *
- * @param int $id 枠ID。
- * @return true|WP_Error
- */
-function ssb_delete_slot( $id ) {
-	global $wpdb;
-
-	$slot = ssb_get_slot( $id );
-
-	if ( ! $slot ) {
-		return new WP_Error( 'ssb_slot_not_found', '対象の枠が見つかりません。' );
-	}
-
-	if ( ! in_array( $slot->status, array( 'open', 'closed' ), true ) ) {
-		return new WP_Error( 'ssb_slot_locked', '予約済み・仮押さえ中の枠は削除できません。' );
-	}
-
-	$deleted = $wpdb->delete( ssb_table( 'slots' ), array( 'id' => (int) $id ), array( '%d' ) );
-
-	if ( ! $deleted ) {
-		return new WP_Error( 'ssb_slot_delete_failed', '枠の削除に失敗しました。' );
-	}
-
-	return true;
-}
-
 /* -------------------------------------------------------------------------
  * 入力のパース
  * ---------------------------------------------------------------------- */
@@ -475,40 +445,6 @@ function ssb_handle_generate_slots() {
 }
 add_action( 'admin_post_ssb_generate_slots', 'ssb_handle_generate_slots' );
 
-/**
- * 予約枠の削除の受け口.
- *
- * @return void
- */
-function ssb_handle_delete_slot() {
-	check_admin_referer( 'ssb_delete_slot', 'ssb_slot_nonce' );
-
-	$instructor = ssb_current_instructor();
-
-	if ( ! $instructor ) {
-		wp_safe_redirect( home_url( '/' ) );
-		exit;
-	}
-
-	$back    = array( 'tab' => 'slots' );
-	$slot_id = isset( $_POST['slot_id'] ) ? absint( wp_unslash( $_POST['slot_id'] ) ) : 0;
-	$slot    = $slot_id ? ssb_get_slot( $slot_id ) : null;
-
-	// 自分の講座の枠かどうかを必ず確認する。
-	if ( ! $slot || ! ssb_get_own_course( (int) $slot->course_id, $instructor->id ) ) {
-		ssb_mypage_done( 'slot_forbidden', $back );
-	}
-
-	$result = ssb_delete_slot( $slot_id );
-
-	if ( is_wp_error( $result ) ) {
-		ssb_mypage_done( $result->get_error_code(), $back );
-	}
-
-	ssb_mypage_done( 'slot_deleted', $back );
-}
-add_action( 'admin_post_ssb_delete_slot', 'ssb_handle_delete_slot' );
-
 /* -------------------------------------------------------------------------
  * 受講者に見せる空き枠
  * ---------------------------------------------------------------------- */
@@ -592,3 +528,148 @@ function ssb_enqueue_calendar() {
 	);
 }
 add_action( 'wp_enqueue_scripts', 'ssb_enqueue_calendar' );
+
+/* -------------------------------------------------------------------------
+ * まとめて削除
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 複数の枠をまとめて削除する.
+ *
+ * 自分の講座の枠で、かつ空き・停止中のものだけを消す。
+ * 予約済み・仮押さえ中の枠と他人の枠は、渡されても消さずに数えるだけにする。
+ *
+ * @param int[] $ids           枠IDの配列。
+ * @param int   $instructor_id 講師ID。
+ * @return array<string,int> deleted / skipped。
+ */
+function ssb_delete_slots( $ids, $instructor_id ) {
+	global $wpdb;
+
+	$ids = array_values( array_filter( array_unique( array_map( 'absint', (array) $ids ) ) ) );
+
+	if ( ! $ids ) {
+		return array(
+			'deleted' => 0,
+			'skipped' => 0,
+		);
+	}
+
+	$slots   = ssb_table( 'slots' );
+	$courses = ssb_table( 'courses' );
+
+	// プレースホルダは件数から組み立てるだけで、値は必ず prepare に渡す。
+	$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+	$args         = array_merge( $ids, array( (int) $instructor_id ) );
+
+	$deletable = $wpdb->get_col(
+		$wpdb->prepare(
+			"SELECT s.id FROM `{$slots}` s
+			INNER JOIN `{$courses}` c ON c.id = s.course_id
+			WHERE s.id IN ({$placeholders})
+				AND c.instructor_id = %d
+				AND s.status IN ('open','closed')",
+			$args
+		)
+	);
+
+	$deleted = 0;
+
+	if ( $deletable ) {
+		$deletable = array_map( 'absint', $deletable );
+		$ph        = implode( ',', array_fill( 0, count( $deletable ), '%d' ) );
+
+		$deleted = (int) $wpdb->query(
+			$wpdb->prepare( "DELETE FROM `{$slots}` WHERE id IN ({$ph})", $deletable )
+		);
+	}
+
+	return array(
+		'deleted' => $deleted,
+		'skipped' => count( $ids ) - $deleted,
+	);
+}
+
+/**
+ * これからの枠をまとめて削除する.
+ *
+ * @param int $instructor_id 講師ID。
+ * @param int $course_id     講座で絞る場合は講座ID。0 なら全講座。
+ * @return array<string,int> deleted / skipped。
+ */
+function ssb_delete_upcoming_slots( $instructor_id, $course_id = 0 ) {
+	global $wpdb;
+
+	ssb_release_expired_holds();
+
+	$slots   = ssb_table( 'slots' );
+	$courses = ssb_table( 'courses' );
+
+	$where = '';
+	$args  = array( (int) $instructor_id, current_time( 'mysql' ) );
+
+	if ( $course_id > 0 ) {
+		$where  = ' AND s.course_id = %d';
+		$args[] = (int) $course_id;
+	}
+
+	$ids = $wpdb->get_col(
+		$wpdb->prepare(
+			"SELECT s.id FROM `{$slots}` s
+			INNER JOIN `{$courses}` c ON c.id = s.course_id
+			WHERE c.instructor_id = %d AND s.start_at >= %s{$where}",
+			$args
+		)
+	);
+
+	return ssb_delete_slots( $ids, $instructor_id );
+}
+
+/**
+ * 予約枠のまとめて削除の受け口.
+ *
+ * @return void
+ */
+function ssb_handle_bulk_delete_slots() {
+	check_admin_referer( 'ssb_bulk_delete_slots', 'ssb_bulk_slots_nonce' );
+
+	$instructor = ssb_current_instructor();
+
+	if ( ! $instructor ) {
+		wp_safe_redirect( home_url( '/' ) );
+		exit;
+	}
+
+	$mode   = isset( $_POST['mode'] ) ? sanitize_key( wp_unslash( $_POST['mode'] ) ) : 'selected';
+	$filter = isset( $_POST['filter_course'] ) ? absint( wp_unslash( $_POST['filter_course'] ) ) : 0;
+
+	$back = array( 'tab' => 'slots' );
+
+	if ( $filter > 0 ) {
+		$back['course'] = (string) $filter;
+	}
+
+	if ( 'all' === $mode ) {
+		$result = ssb_delete_upcoming_slots( $instructor->id, $filter );
+	} else {
+		$ids = isset( $_POST['slot_ids'] ) ? (array) wp_unslash( $_POST['slot_ids'] ) : array();
+
+		if ( ! $ids ) {
+			ssb_mypage_done( 'slots_none_selected', $back );
+		}
+
+		$result = ssb_delete_slots( $ids, $instructor->id );
+	}
+
+	ssb_mypage_done(
+		'slots_deleted',
+		array_merge(
+			$back,
+			array(
+				'deleted' => (string) $result['deleted'],
+				'skipped' => (string) $result['skipped'],
+			)
+		)
+	);
+}
+add_action( 'admin_post_ssb_bulk_delete_slots', 'ssb_handle_bulk_delete_slots' );
