@@ -1,0 +1,15 @@
+/*
+Theme Name: Skillshare
+Theme URI: https://github.com/tagukichi/skillshare
+Author: tagukichi
+Description: スキルシェア型の予約・決済サイト PoC 用テーマ。講師が単発相談の枠を出品し、受講者がカレンダーから枠を選んでカード決済すると予約が確定する。
+Version: 0.1.0
+Requires at least: 6.0
+Tested up to: 6.9
+Requires PHP: 8.1
+License: GPL-2.0-or-later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+Text Domain: skillshare
+*/
+
+/* 実際のスタイルは assets/css/main.css に置く。このファイルはテーマ定義のみ。 */
