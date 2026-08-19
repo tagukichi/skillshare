@@ -361,19 +361,13 @@ function ssb_create_instructor_user( $email, $display_name ) {
  * @return void
  */
 function ssb_apply_fail( $errors, $input ) {
-	$token = wp_generate_uuid4();
-
-	set_transient(
-		'ssb_apply_' . $token,
+	ssb_flash_redirect(
+		ssb_get_page_url( 'apply' ),
 		array(
 			'errors' => $errors,
 			'input'  => $input,
-		),
-		10 * MINUTE_IN_SECONDS
+		)
 	);
-
-	wp_safe_redirect( add_query_arg( 'ssb_err', $token, ssb_get_page_url( 'apply' ) ) );
-	exit;
 }
 
 /**
@@ -384,20 +378,7 @@ function ssb_apply_fail( $errors, $input ) {
  * @return array<string,mixed>|null errors / input。無ければ null。
  */
 function ssb_get_apply_feedback() {
-	if ( empty( $_GET['ssb_err'] ) ) {
-		return null;
-	}
-
-	$token = sanitize_key( wp_unslash( $_GET['ssb_err'] ) );
-	$data  = get_transient( 'ssb_apply_' . $token );
-
-	if ( ! is_array( $data ) ) {
-		return null;
-	}
-
-	delete_transient( 'ssb_apply_' . $token );
-
-	return $data;
+	return ssb_flash_take();
 }
 
 /* -------------------------------------------------------------------------
@@ -536,12 +517,13 @@ function ssb_restrict_mypage() {
 	}
 
 	if ( ! is_user_logged_in() ) {
-		wp_safe_redirect( wp_login_url( ssb_get_page_url( 'mypage' ) ) );
+		wp_safe_redirect( ssb_login_url( ssb_get_page_url( 'mypage' ) ) );
 		exit;
 	}
 
 	if ( ! ssb_current_instructor() ) {
-		wp_safe_redirect( home_url( '/' ) );
+		// ログイン済みだが講師ではない場合は申請ページへ案内する。
+		wp_safe_redirect( ssb_get_page_url( 'apply' ) );
 		exit;
 	}
 }
@@ -690,3 +672,145 @@ function ssb_handle_save_profile() {
 	ssb_mypage_done( 'profile_saved', array( 'tab' => 'profile' ) );
 }
 add_action( 'admin_post_ssb_save_profile', 'ssb_handle_save_profile' );
+
+/* -------------------------------------------------------------------------
+ * 未ログインでも使えるフラッシュメッセージ
+ * ---------------------------------------------------------------------- */
+
+/**
+ * データを預けてリダイレクトする.
+ *
+ * 未ログインだとセッションに頼れないため、トランジェントに預けて
+ * 取り出し用のトークンだけを URL に載せる。
+ *
+ * @param string              $url  リダイレクト先。
+ * @param array<string,mixed> $data errors / input など。
+ * @return void
+ */
+function ssb_flash_redirect( $url, $data ) {
+	$token = wp_generate_uuid4();
+
+	set_transient( 'ssb_flash_' . $token, $data, 10 * MINUTE_IN_SECONDS );
+
+	wp_safe_redirect( add_query_arg( 'ssb_err', $token, $url ) );
+	exit;
+}
+
+/**
+ * 預けたデータを取り出す（1回だけ）.
+ *
+ * @return array<string,mixed>|null
+ */
+function ssb_flash_take() {
+	if ( empty( $_GET['ssb_err'] ) ) {
+		return null;
+	}
+
+	$token = sanitize_key( wp_unslash( $_GET['ssb_err'] ) );
+	$data  = get_transient( 'ssb_flash_' . $token );
+
+	if ( ! is_array( $data ) ) {
+		return null;
+	}
+
+	delete_transient( 'ssb_flash_' . $token );
+
+	return $data;
+}
+
+/* -------------------------------------------------------------------------
+ * ログイン（WordPress 標準画面は使わず自前のページで受ける）
+ * ---------------------------------------------------------------------- */
+
+/**
+ * ログインページの URL を返す.
+ *
+ * @param string $redirect_to ログイン後の遷移先。
+ * @return string
+ */
+function ssb_login_url( $redirect_to = '' ) {
+	$url = ssb_get_page_url( 'login' );
+
+	return $redirect_to ? add_query_arg( 'redirect_to', rawurlencode( $redirect_to ), $url ) : $url;
+}
+
+/**
+ * ログインの受け口.
+ *
+ * @return void
+ */
+function ssb_handle_login() {
+	check_admin_referer( 'ssb_login', 'ssb_login_nonce' );
+
+	$redirect_to = isset( $_POST['redirect_to'] ) ? esc_url_raw( wp_unslash( $_POST['redirect_to'] ) ) : '';
+	$user_login  = isset( $_POST['log'] ) ? sanitize_text_field( wp_unslash( $_POST['log'] ) ) : '';
+
+	// パスワードは sanitize すると文字が落ちるので加工しない。
+	$password = isset( $_POST['pwd'] ) ? (string) wp_unslash( $_POST['pwd'] ) : '';
+
+	$back = ssb_login_url( $redirect_to );
+
+	if ( '' === $user_login || '' === $password ) {
+		ssb_flash_redirect(
+			$back,
+			array(
+				'errors' => array( 'ユーザー名（メールアドレス）とパスワードを入力してください。' ),
+				'input'  => array( 'log' => $user_login ),
+			)
+		);
+	}
+
+	$user = wp_signon(
+		array(
+			'user_login'    => $user_login,
+			'user_password' => $password,
+			'remember'      => ! empty( $_POST['rememberme'] ),
+		),
+		is_ssl()
+	);
+
+	if ( is_wp_error( $user ) ) {
+		// アカウントの有無を知られないよう、原因は区別せず同じ文言にする。
+		ssb_flash_redirect(
+			$back,
+			array(
+				'errors' => array( 'ユーザー名（メールアドレス）またはパスワードが正しくありません。' ),
+				'input'  => array( 'log' => $user_login ),
+			)
+		);
+	}
+
+	wp_set_current_user( $user->ID );
+
+	wp_safe_redirect( $redirect_to ? $redirect_to : ssb_get_page_url( 'mypage' ) );
+	exit;
+}
+add_action( 'admin_post_nopriv_ssb_login', 'ssb_handle_login' );
+add_action( 'admin_post_ssb_login', 'ssb_handle_login' );
+
+/**
+ * パスワード再設定メールの受け口.
+ *
+ * @return void
+ */
+function ssb_handle_lostpassword() {
+	check_admin_referer( 'ssb_lostpassword', 'ssb_lostpassword_nonce' );
+
+	$login_page = add_query_arg( 'action', 'lostpassword', ssb_get_page_url( 'login' ) );
+	$user_login = isset( $_POST['user_login'] ) ? sanitize_text_field( wp_unslash( $_POST['user_login'] ) ) : '';
+
+	if ( '' === $user_login ) {
+		ssb_flash_redirect(
+			$login_page,
+			array( 'errors' => array( 'メールアドレスまたはユーザー名を入力してください。' ) )
+		);
+	}
+
+	retrieve_password( $user_login );
+
+	// 登録の有無を知られないよう、結果にかかわらず同じ画面を返す。
+	wp_safe_redirect( add_query_arg( 'sent', '1', $login_page ) );
+	exit;
+}
+add_action( 'admin_post_nopriv_ssb_lostpassword', 'ssb_handle_lostpassword' );
+add_action( 'admin_post_ssb_lostpassword', 'ssb_handle_lostpassword' );

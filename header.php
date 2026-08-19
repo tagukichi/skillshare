@@ -23,10 +23,11 @@ defined( 'ABSPATH' ) || exit;
 			<a href="<?php echo esc_url( home_url( '/' ) ); ?>"><?php bloginfo( 'name' ); ?></a>
 		</p>
 		<nav class="ssb-header__nav">
-			<a href="<?php echo esc_url( home_url( '/courses/' ) ); ?>">講座を探す</a>
+			<a href="<?php echo esc_url( ssb_get_page_url( 'courses' ) ); ?>">講座を探す</a>
 			<a href="<?php echo esc_url( ssb_get_page_url( 'apply' ) ); ?>">講師になる</a>
-			<?php if ( ssb_current_instructor() ) : ?>
-				<a href="<?php echo esc_url( ssb_get_page_url( 'mypage' ) ); ?>">マイページ</a>
+			<a href="<?php echo esc_url( ssb_get_page_url( 'mypage' ) ); ?>">マイページ</a>
+			<?php if ( is_user_logged_in() ) : ?>
+				<a href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>">ログアウト</a>
 			<?php endif; ?>
 		</nav>
 	</div>

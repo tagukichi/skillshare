@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
  * インストール処理のバージョン。スキーマや管理対象の固定ページを変更したら必ず上げる。
  * 上げると次に wp-admin を開いた時点で ssb_install() が再実行される。
  */
-define( 'SSB_DB_VERSION', '1.3.0' );
+define( 'SSB_DB_VERSION', '1.4.0' );
 
 /**
  * バージョンを保存するオプション名.
@@ -102,6 +102,9 @@ function ssb_get_schema() {
 		instructor_id bigint(20) unsigned NOT NULL DEFAULT 0,
 		title varchar(255) NOT NULL DEFAULT '',
 		description text,
+		content text,
+		target text,
+		image_id bigint(20) unsigned NOT NULL DEFAULT 0,
 		price int unsigned NOT NULL DEFAULT 0,
 		duration_min int unsigned NOT NULL DEFAULT 0,
 		status varchar(20) NOT NULL DEFAULT 'draft',
@@ -168,6 +171,9 @@ function ssb_install() {
 
 	ssb_install_pages();
 
+	// /courses/{id} のリライトルールを反映させる。
+	flush_rewrite_rules( false );
+
 	update_option( SSB_DB_VERSION_OPTION, SSB_DB_VERSION );
 }
 add_action( 'after_switch_theme', 'ssb_install' );
@@ -199,11 +205,19 @@ add_action( 'admin_init', 'ssb_maybe_install' );
  */
 function ssb_get_managed_pages() {
 	return array(
-		'apply'  => array(
+		'courses' => array(
+			'title'    => '講座一覧',
+			'template' => 'page-courses.php',
+		),
+		'apply'   => array(
 			'title'    => '講師申請',
 			'template' => 'page-apply.php',
 		),
-		'mypage' => array(
+		'login'   => array(
+			'title'    => 'ログイン',
+			'template' => 'page-login.php',
+		),
+		'mypage'  => array(
 			'title'    => '講師マイページ',
 			'template' => 'page-mypage.php',
 		),

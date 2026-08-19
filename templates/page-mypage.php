@@ -130,14 +130,17 @@ get_header();
 		$ssb_c_id       = $ssb_editing ? (int) $ssb_editing->id : 0;
 		$ssb_c_title    = isset( $ssb_input['title'] ) ? $ssb_input['title'] : ( $ssb_editing ? $ssb_editing->title : '' );
 		$ssb_c_desc     = isset( $ssb_input['description'] ) ? $ssb_input['description'] : ( $ssb_editing ? (string) $ssb_editing->description : '' );
+		$ssb_c_content  = isset( $ssb_input['content'] ) ? $ssb_input['content'] : ( $ssb_editing ? (string) $ssb_editing->content : '' );
+		$ssb_c_target   = isset( $ssb_input['target'] ) ? $ssb_input['target'] : ( $ssb_editing ? (string) $ssb_editing->target : '' );
 		$ssb_c_price    = isset( $ssb_input['price'] ) ? $ssb_input['price'] : ( $ssb_editing ? (string) $ssb_editing->price : '' );
 		$ssb_c_duration = isset( $ssb_input['duration_min'] ) ? $ssb_input['duration_min'] : ( $ssb_editing ? (string) $ssb_editing->duration_min : '60' );
 		$ssb_c_status   = isset( $ssb_input['status'] ) ? $ssb_input['status'] : ( $ssb_editing ? $ssb_editing->status : 'draft' );
+		$ssb_c_image    = $ssb_editing ? ssb_course_image_url( $ssb_editing, 'medium' ) : '';
 		?>
 
 		<h2 class="ssb-section__title"><?php echo $ssb_editing ? '講座を編集' : '講座を作成'; ?></h2>
 
-		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
 			<?php wp_nonce_field( 'ssb_save_course', 'ssb_course_nonce' ); ?>
 			<input type="hidden" name="action" value="ssb_save_course">
 			<input type="hidden" name="course_id" value="<?php echo esc_attr( (string) $ssb_c_id ); ?>">
@@ -149,9 +152,40 @@ get_header();
 			</div>
 
 			<div class="ssb-field">
-				<label class="ssb-field__label" for="ssb-course-desc">講座の説明</label>
+				<label class="ssb-field__label" for="ssb-course-image">イメージ画像</label>
+				<?php if ( $ssb_c_image ) : ?>
+					<p class="ssb-course-form__preview">
+						<img src="<?php echo esc_url( $ssb_c_image ); ?>" alt="現在のイメージ画像">
+					</p>
+					<p>
+						<label>
+							<input type="checkbox" name="remove_image" value="1"> この画像を削除する
+						</label>
+					</p>
+				<?php endif; ?>
+				<input class="ssb-input" type="file" id="ssb-course-image" name="image" accept="image/jpeg,image/png,image/webp,image/gif">
+				<p class="ssb-field__hint">
+					JPEG / PNG / WebP / GIF、<?php echo esc_html( (string) (int) ( SSB_COURSE_MAX_IMAGE_SIZE / MB_IN_BYTES ) ); ?> MB まで。
+					新しい画像を選ぶと差し替わります。横長（16:9 程度）がおすすめです。
+				</p>
+			</div>
+
+			<div class="ssb-field">
+				<label class="ssb-field__label" for="ssb-course-desc">概要</label>
 				<textarea class="ssb-textarea" id="ssb-course-desc" name="description"><?php echo esc_textarea( $ssb_c_desc ); ?></textarea>
-				<p class="ssb-field__hint">どんな相談に応じられるか、受講者が判断できる情報をご記入ください。</p>
+				<p class="ssb-field__hint">一覧に表示される短い紹介文です。</p>
+			</div>
+
+			<div class="ssb-field">
+				<label class="ssb-field__label" for="ssb-course-content">内容詳細</label>
+				<textarea class="ssb-textarea" id="ssb-course-content" name="content"><?php echo esc_textarea( $ssb_c_content ); ?></textarea>
+				<p class="ssb-field__hint">当日の進め方、話せるテーマ、事前に準備いただきたいことなど。</p>
+			</div>
+
+			<div class="ssb-field">
+				<label class="ssb-field__label" for="ssb-course-target">こんな方におすすめ</label>
+				<textarea class="ssb-textarea" id="ssb-course-target" name="target"><?php echo esc_textarea( $ssb_c_target ); ?></textarea>
+				<p class="ssb-field__hint">想定している受講者像をご記入ください。</p>
 			</div>
 
 			<div class="ssb-field">
@@ -180,7 +214,7 @@ get_header();
 						</option>
 					<?php endforeach; ?>
 				</select>
-				<p class="ssb-field__hint">公開中にすると講座一覧に表示されます。</p>
+				<p class="ssb-field__hint">公開中にすると講座一覧とトップページに表示されます。</p>
 			</div>
 
 			<p>
@@ -205,6 +239,7 @@ get_header();
 			<table class="ssb-table">
 				<thead>
 					<tr>
+						<th scope="col" style="width:80px;">画像</th>
 						<th scope="col">講座</th>
 						<th scope="col">価格</th>
 						<th scope="col">所要時間</th>
@@ -214,11 +249,22 @@ get_header();
 				</thead>
 				<tbody>
 					<?php foreach ( $ssb_courses as $ssb_course ) : ?>
+						<?php $ssb_thumb = ssb_course_image_url( $ssb_course, 'thumbnail' ); ?>
 						<tr>
+							<td>
+								<?php if ( $ssb_thumb ) : ?>
+									<img class="ssb-thumb" src="<?php echo esc_url( $ssb_thumb ); ?>" alt="">
+								<?php else : ?>
+									<span class="ssb-muted">—</span>
+								<?php endif; ?>
+							</td>
 							<td>
 								<strong><?php echo esc_html( $ssb_course->title ); ?></strong>
 								<?php if ( '' !== (string) $ssb_course->description ) : ?>
 									<br><span class="ssb-muted"><?php echo esc_html( wp_trim_words( (string) $ssb_course->description, 30, '…' ) ); ?></span>
+								<?php endif; ?>
+								<?php if ( 'published' === $ssb_course->status ) : ?>
+									<br><a href="<?php echo esc_url( ssb_course_url( $ssb_course->id ) ); ?>" target="_blank" rel="noopener">公開ページを見る</a>
 								<?php endif; ?>
 							</td>
 							<td class="ssb-price"><?php echo esc_html( number_format( (int) $ssb_course->price ) ); ?> 円</td>

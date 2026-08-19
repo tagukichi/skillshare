@@ -119,3 +119,6 @@ SPEC.md「7. 実装順序」に従って上から進める。
   未ログインで既存メールアドレスの場合はエラーとし、ログイン後に申請してもらう（なりすまし防止）。
 - **タイムゾーン**：DATETIME はすべてサイト設定のタイムゾーン（Asia/Tokyo）のローカル時刻で保存する。
 - **申請フォームの「希望する講座内容」**：`wp_ssb_instructors.course_plan` に保存する。
+- **ログイン画面**：`wp-login.php` は使わず `/login` の独自画面で受ける。
+- **講座のイメージ画像**：`wp_ssb_courses.image_id` に添付IDで持つ。講師には `upload_files` 権限を
+  与えず、`inc/booking/course.php` 側で MIME とサイズを検証してから `media_handle_upload()` に渡す。

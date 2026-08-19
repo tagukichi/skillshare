@@ -128,7 +128,10 @@ vendor/
 | id | BIGINT UNSIGNED AI PK | |
 | instructor_id | BIGINT UNSIGNED | |
 | title | VARCHAR(255) | |
-| description | TEXT | |
+| description | TEXT | 概要（一覧・カードに表示） |
+| content | TEXT | 内容詳細 |
+| target | TEXT | こんな方におすすめ |
+| image_id | BIGINT UNSIGNED | イメージ画像の添付ID（0なら未設定） |
 | price | INT | 税込価格（円） |
 | duration_min | INT | 所要時間（分） |
 | status | VARCHAR(20) | `draft` / `published` |
@@ -196,12 +199,18 @@ vendor/
 
 ### 4.2 講師マイページ（`/mypage`）
 
-`status = approved` の講師のみアクセス可。それ以外はトップへリダイレクト。
+`status = approved` の講師のみアクセス可。
+未ログインなら `/login` へ、ログイン済みだが講師でない場合は `/apply` へリダイレクトする。
+
+ログインは WordPress 標準の `wp-login.php` ではなく `/login` で受ける。
+ID・パスワード・ログイン状態の保存・パスワード再設定への導線を持つ独自画面とし、
+認証失敗時はアカウントの有無を区別しない文言を返す。
 
 以下を1ページ内のタブで構成する。
 
 1. **プロフィール編集**
 2. **講座管理**：講座の作成・編集・公開/非公開
+   　項目はタイトル・イメージ画像・概要・内容詳細・こんな方におすすめ・価格・所要時間
 3. **予約枠登録**：日付と時間帯を指定して枠を一括生成（例：3/1〜3/31 の平日 14:00-18:00、60分刻み）
 4. **Googleカレンダー連携**：ICS URL の登録・解除
 5. **予約一覧**：自分の講座に入った予約を表示
@@ -329,10 +338,11 @@ Composer が使えない環境も想定し、`wp_remote_post()` による直接�
 
 | URL | 内容 | アクセス |
 |---|---|---|
-| `/` | トップ | 全員 |
+| `/` | トップ（公開中の講座を新着順に表示） | 全員 |
 | `/courses` | 講座一覧 | 全員 |
 | `/courses/{id}` | 講座詳細＋予約カレンダー | 全員 |
 | `/apply` | 講師申請フォーム | 全員 |
+| `/login` | ログイン・パスワード再設定 | 全員 |
 | `/mypage` | 講師マイページ | 承認済み講師 |
 | `/booking/done` | 予約完了 | 全員 |
 | `/terms` | 利用規約 | 全員 |

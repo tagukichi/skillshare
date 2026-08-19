@@ -75,6 +75,15 @@ add_action( 'wp_enqueue_scripts', 'ssb_enqueue_assets' );
  * @return string
  */
 function ssb_template_include( $template ) {
+	// /courses/{id} は固定ページではなくリライトルール経由で来る。
+	if ( (int) get_query_var( 'ssb_course_id' ) > 0 ) {
+		$single = SSB_PATH . '/templates/single-course.php';
+
+		if ( file_exists( $single ) ) {
+			return $single;
+		}
+	}
+
 	if ( ! is_page() ) {
 		return $template;
 	}
