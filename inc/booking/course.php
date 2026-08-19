@@ -572,3 +572,121 @@ function ssb_query_vars( $vars ) {
 	return $vars;
 }
 add_filter( 'query_vars', 'ssb_query_vars' );
+
+/* -------------------------------------------------------------------------
+ * 削除
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 講座を削除する.
+ *
+ * 予約データを壊さないよう、次のいずれかに当てはまる場合は削除しない。
+ * - 予約済み・仮押さえ中の枠がある
+ * - 支払い済みの予約がある（決済履歴は残す）
+ *
+ * 削除できる場合は、未完了の予約と枠、イメージ画像もまとめて片付ける。
+ *
+ * @param int $id 講座ID。
+ * @return true|WP_Error
+ */
+function ssb_delete_course( $id ) {
+	global $wpdb;
+
+	$id     = (int) $id;
+	$course = ssb_get_course( $id );
+
+	if ( ! $course ) {
+		return new WP_Error( 'ssb_course_not_found', '対象の講座が見つかりません。' );
+	}
+
+	$slots    = ssb_table( 'slots' );
+	$bookings = ssb_table( 'bookings' );
+
+	// 期限切れの仮押さえは先に解放しておく（無駄に削除を止めないため）。
+	ssb_release_expired_holds();
+
+	$locked = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT COUNT(*) FROM `{$slots}` WHERE course_id = %d AND status IN ('held','booked')",
+			$id
+		)
+	);
+
+	if ( $locked > 0 ) {
+		return new WP_Error(
+			'ssb_course_has_active_slots',
+			sprintf( '予約済み・仮押さえ中の枠が %d 件あるため削除できません。', $locked )
+		);
+	}
+
+	$paid = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT COUNT(*) FROM `{$bookings}` b
+			INNER JOIN `{$slots}` s ON s.id = b.slot_id
+			WHERE s.course_id = %d AND b.status = 'paid'",
+			$id
+		)
+	);
+
+	if ( $paid > 0 ) {
+		return new WP_Error(
+			'ssb_course_has_bookings',
+			sprintf( '決済済みの予約が %d 件あるため削除できません。', $paid )
+		);
+	}
+
+	// 未完了（pending / cancelled）の予約を片付けてから枠を消す。
+	$wpdb->query(
+		$wpdb->prepare(
+			"DELETE b FROM `{$bookings}` b
+			INNER JOIN `{$slots}` s ON s.id = b.slot_id
+			WHERE s.course_id = %d",
+			$id
+		)
+	);
+
+	$wpdb->delete( $slots, array( 'course_id' => $id ), array( '%d' ) );
+
+	$deleted = $wpdb->delete( ssb_table( 'courses' ), array( 'id' => $id ), array( '%d' ) );
+
+	if ( ! $deleted ) {
+		return new WP_Error( 'ssb_course_delete_failed', '講座の削除に失敗しました。' );
+	}
+
+	ssb_delete_course_image( (int) $course->image_id );
+
+	return true;
+}
+
+/**
+ * 講座の削除の受け口.
+ *
+ * @return void
+ */
+function ssb_handle_delete_course() {
+	check_admin_referer( 'ssb_delete_course', 'ssb_delete_course_nonce' );
+
+	$instructor = ssb_current_instructor();
+
+	if ( ! $instructor ) {
+		wp_safe_redirect( home_url( '/' ) );
+		exit;
+	}
+
+	$back      = array( 'tab' => 'courses' );
+	$course_id = isset( $_POST['course_id'] ) ? absint( wp_unslash( $_POST['course_id'] ) ) : 0;
+
+	// 自分の講座かどうかを必ず確認する。
+	if ( ! $course_id || ! ssb_get_own_course( $course_id, $instructor->id ) ) {
+		ssb_mypage_done( 'course_forbidden', $back );
+	}
+
+	$result = ssb_delete_course( $course_id );
+
+	if ( is_wp_error( $result ) ) {
+		ssb_mypage_done( $result->get_error_code(), $back );
+	}
+
+	ssb_mypage_done( 'course_deleted', $back );
+}
+add_action( 'admin_post_ssb_delete_course', 'ssb_handle_delete_course' );

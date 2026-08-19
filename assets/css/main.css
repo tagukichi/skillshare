@@ -442,3 +442,146 @@ img {
 	border: 1px solid var(--ssb-border);
 	border-radius: var(--ssb-radius);
 }
+
+/* Booking calendar -------------------------------------------------------- */
+
+.ssb-calendar {
+	max-width: 520px;
+}
+
+.ssb-calendar__nav {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.ssb-calendar__month {
+	font-weight: 700;
+	font-size: 1.05rem;
+}
+
+.ssb-calendar__navbtn {
+	width: 36px;
+	height: 36px;
+	border: 1px solid var(--ssb-border);
+	border-radius: var(--ssb-radius);
+	background: var(--ssb-bg);
+	color: var(--ssb-text);
+	font-size: 1.1rem;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.ssb-calendar__navbtn:disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
+}
+
+.ssb-calendar__grid {
+	width: 100%;
+	border-collapse: collapse;
+	table-layout: fixed;
+}
+
+.ssb-calendar__grid th {
+	padding: 6px 0;
+	color: var(--ssb-muted);
+	font-size: 0.8rem;
+	font-weight: 600;
+}
+
+.ssb-calendar__grid td {
+	padding: 2px;
+	text-align: center;
+	vertical-align: top;
+}
+
+.ssb-calendar__day {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	width: 100%;
+	min-height: 48px;
+	padding: 4px 0;
+	border: 1px solid transparent;
+	border-radius: var(--ssb-radius);
+	background: transparent;
+	color: var(--ssb-muted);
+	font: inherit;
+	font-size: 0.9rem;
+}
+
+.ssb-calendar__day.is-available {
+	border-color: var(--ssb-border);
+	background: var(--ssb-bg);
+	color: var(--ssb-text);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.ssb-calendar__day.is-available:hover {
+	border-color: var(--ssb-accent);
+}
+
+.ssb-calendar__day.is-selected {
+	border-color: var(--ssb-accent);
+	background: var(--ssb-accent);
+	color: var(--ssb-accent-text);
+}
+
+.ssb-calendar__day.is-today .ssb-calendar__daynum {
+	text-decoration: underline;
+}
+
+.ssb-calendar__count {
+	font-size: 0.7rem;
+	font-weight: 400;
+	opacity: 0.85;
+}
+
+.ssb-calendar__times {
+	margin-top: 24px;
+	padding-top: 20px;
+	border-top: 1px solid var(--ssb-border);
+}
+
+.ssb-calendar__times-title {
+	margin: 0 0 12px;
+	font-size: 1rem;
+}
+
+.ssb-calendar__slots {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.ssb-calendar__slot {
+	padding: 8px 14px;
+	border: 1px solid var(--ssb-border);
+	border-radius: var(--ssb-radius);
+	background: var(--ssb-bg);
+	color: var(--ssb-text);
+	font: inherit;
+	font-size: 0.9rem;
+	cursor: pointer;
+}
+
+.ssb-calendar__slot:hover:not(:disabled) {
+	border-color: var(--ssb-accent);
+	color: var(--ssb-accent);
+}
+
+.ssb-calendar__slot:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.ssb-calendar__note {
+	margin: 12px 0 0;
+	font-size: 0.85rem;
+}

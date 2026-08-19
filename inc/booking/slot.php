@@ -508,3 +508,87 @@ function ssb_handle_delete_slot() {
 	ssb_mypage_done( 'slot_deleted', $back );
 }
 add_action( 'admin_post_ssb_delete_slot', 'ssb_handle_delete_slot' );
+
+/* -------------------------------------------------------------------------
+ * 受講者に見せる空き枠
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 予約可能な枠を返す.
+ *
+ * SPEC 4.3 の引き算のうち、この段階では次まで。
+ *   講師が登録した枠（open） － 仮押さえ中で期限内のもの
+ * ssb_release_expired_holds() を先に呼ぶので、期限切れの held は open に戻ってから
+ * 抽出される。Googleカレンダーによる除外は実装順序 11 で加わる。
+ *
+ * @param int $course_id 講座ID。
+ * @return object[]
+ */
+function ssb_get_available_slots( $course_id ) {
+	global $wpdb;
+
+	ssb_release_expired_holds();
+
+	$table = ssb_table( 'slots' );
+
+	return $wpdb->get_results(
+		$wpdb->prepare(
+			"SELECT id, start_at, end_at FROM `{$table}`
+			WHERE course_id = %d AND status = 'open' AND start_at > %s
+			ORDER BY start_at ASC",
+			(int) $course_id,
+			current_time( 'mysql' )
+		)
+	);
+}
+
+/**
+ * カレンダー用に整形した空き枠を返す.
+ *
+ * DATETIME はローカルの壁時計なので、日付と時刻はそのまま切り出す。
+ *
+ * @param int $course_id 講座ID。
+ * @return array<int,array<string,mixed>>
+ */
+function ssb_get_calendar_slots( $course_id ) {
+	$out = array();
+
+	foreach ( ssb_get_available_slots( $course_id ) as $slot ) {
+		$out[] = array(
+			'id'    => (int) $slot->id,
+			'date'  => substr( (string) $slot->start_at, 0, 10 ),
+			'start' => substr( (string) $slot->start_at, 11, 5 ),
+			'end'   => substr( (string) $slot->end_at, 11, 5 ),
+		);
+	}
+
+	return $out;
+}
+
+/**
+ * 講座詳細ページで予約カレンダーを読み込む.
+ *
+ * @return void
+ */
+function ssb_enqueue_calendar() {
+	$course_id = (int) get_query_var( 'ssb_course_id' );
+
+	if ( ! $course_id || ! ssb_get_published_course( $course_id ) ) {
+		return;
+	}
+
+	wp_enqueue_script( 'skillshare-calendar', SSB_URL . '/assets/js/calendar.js', array(), SSB_VERSION, true );
+
+	wp_add_inline_script(
+		'skillshare-calendar',
+		'window.ssbCalendarData = ' . wp_json_encode(
+			array(
+				'courseId' => $course_id,
+				'today'    => current_time( 'Y-m-d' ),
+				'slots'    => ssb_get_calendar_slots( $course_id ),
+			)
+		) . ';',
+		'before'
+	);
+}
+add_action( 'wp_enqueue_scripts', 'ssb_enqueue_calendar' );

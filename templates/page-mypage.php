@@ -46,6 +46,11 @@ $ssb_notices = array(
 	'course_published'   => array( 'success', '講座を公開しました。' ),
 	'course_unpublished' => array( 'success', '講座を非公開にしました。' ),
 	'course_forbidden'   => array( 'error', '対象の講座が見つかりません。' ),
+	'course_deleted'             => array( 'success', '講座を削除しました。' ),
+	'ssb_course_has_active_slots' => array( 'error', '予約済み・仮押さえ中の枠があるため、この講座は削除できません。' ),
+	'ssb_course_has_bookings'     => array( 'error', '決済済みの予約があるため、この講座は削除できません。' ),
+	'ssb_course_not_found'        => array( 'error', '対象の講座が見つかりません。' ),
+	'ssb_course_delete_failed'    => array( 'error', '講座の削除に失敗しました。' ),
 	'slot_deleted'           => array( 'success', '予約枠を削除しました。' ),
 	'slot_forbidden'         => array( 'error', '対象の予約枠が見つかりません。' ),
 	'ssb_slot_locked'        => array( 'error', '予約済み・仮押さえ中の枠は削除できません。' ),
@@ -301,6 +306,14 @@ get_header();
 									<button type="submit" class="ssb-button ssb-button--secondary">
 										<?php echo 'published' === $ssb_course->status ? '非公開にする' : '公開する'; ?>
 									</button>
+								</form>
+
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;">
+									<?php wp_nonce_field( 'ssb_delete_course', 'ssb_delete_course_nonce' ); ?>
+									<input type="hidden" name="action" value="ssb_delete_course">
+									<input type="hidden" name="course_id" value="<?php echo esc_attr( (string) $ssb_course->id ); ?>">
+									<button type="submit" class="ssb-button ssb-button--secondary"
+										onclick="return confirm('「<?php echo esc_js( $ssb_course->title ); ?>」を削除します。\nこの講座の予約枠とイメージ画像もまとめて削除されます。\n\nよろしいですか？');">削除</button>
 								</form>
 							</td>
 						</tr>

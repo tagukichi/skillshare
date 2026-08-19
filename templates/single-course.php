@@ -77,7 +77,14 @@ get_header();
 
 	<section class="ssb-section">
 		<h2 class="ssb-section__title">予約</h2>
-		<p class="ssb-muted">予約カレンダーは準備中です。</p>
+
+		<div id="ssb-calendar" class="ssb-calendar">
+			<p class="ssb-muted">カレンダーを読み込んでいます…</p>
+		</div>
+
+		<noscript>
+			<p class="ssb-muted">予約カレンダーの表示には JavaScript が必要です。</p>
+		</noscript>
 	</section>
 
 	<p><a href="<?php echo esc_url( ssb_get_page_url( 'courses' ) ); ?>">&laquo; 講座一覧へ戻る</a></p>
