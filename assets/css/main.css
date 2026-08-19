@@ -608,3 +608,33 @@ img {
 	gap: 8px;
 	margin-top: 16px;
 }
+
+/* Scrollable slot list ---------------------------------------------------- */
+
+.ssb-slotlist {
+	max-height: 460px;
+	overflow-y: auto;
+	border: 1px solid var(--ssb-border);
+	border-radius: var(--ssb-radius);
+	overscroll-behavior: contain;
+}
+
+.ssb-slotlist .ssb-table {
+	font-size: 0.9rem;
+}
+
+.ssb-slotlist .ssb-table td {
+	border-bottom-color: #eaeef2;
+}
+
+.ssb-slotlist .ssb-table tr:last-child td {
+	border-bottom: none;
+}
+
+/* 見出し行はスクロールしても残す。border-collapse では境界線が固定されないので影で描く。 */
+.ssb-table--sticky thead th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	box-shadow: inset 0 -1px 0 var(--ssb-border);
+}

@@ -494,8 +494,25 @@ get_header();
 			<?php wp_nonce_field( 'ssb_bulk_delete_slots', 'ssb_bulk_slots_nonce' ); ?>
 			<input type="hidden" name="action" value="ssb_bulk_delete_slots">
 			<input type="hidden" name="filter_course" value="<?php echo esc_attr( (string) $ssb_filter_course ); ?>">
+			<p class="ssb-slotactions">
+				<button type="submit" name="mode" value="selected" class="ssb-button ssb-button--secondary">
+					選択した枠を削除
+				</button>
 
-			<table class="ssb-table">
+				<?php if ( $ssb_deletable > 0 ) : ?>
+					<button type="submit" name="mode" value="all" class="ssb-button ssb-button--secondary"
+						onclick="return confirm('表示中の削除できる枠 <?php echo esc_js( (string) $ssb_deletable ); ?> 件をまとめて削除します。\nよろしいですか？');">
+						表示中の枠をすべて削除（<?php echo esc_html( (string) $ssb_deletable ); ?>件）
+					</button>
+				<?php endif; ?>
+			</p>
+
+			<p class="ssb-muted" style="font-size:0.85rem;">
+				予約済み・仮押さえ中の枠は選択できません。削除の対象にもなりません。
+			</p>
+
+			<div class="ssb-slotlist">
+			<table class="ssb-table ssb-table--sticky">
 				<thead>
 					<tr>
 						<th scope="col" style="width:36px;">
@@ -527,23 +544,7 @@ get_header();
 					<?php endforeach; ?>
 				</tbody>
 			</table>
-
-			<p class="ssb-slotactions">
-				<button type="submit" name="mode" value="selected" class="ssb-button ssb-button--secondary">
-					選択した枠を削除
-				</button>
-
-				<?php if ( $ssb_deletable > 0 ) : ?>
-					<button type="submit" name="mode" value="all" class="ssb-button ssb-button--secondary"
-						onclick="return confirm('表示中の削除できる枠 <?php echo esc_js( (string) $ssb_deletable ); ?> 件をまとめて削除します。\nよろしいですか？');">
-						表示中の枠をすべて削除（<?php echo esc_html( (string) $ssb_deletable ); ?>件）
-					</button>
-				<?php endif; ?>
-			</p>
-
-			<p class="ssb-muted" style="font-size:0.85rem;">
-				予約済み・仮押さえ中の枠は選択できません。削除の対象にもなりません。
-			</p>
+			</div>
 		</form>
 
 		<script>
