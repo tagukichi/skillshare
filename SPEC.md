@@ -111,12 +111,15 @@ vendor/
 | status | VARCHAR(20) | `pending` / `approved` / `rejected` |
 | display_name | VARCHAR(100) | 表示名 |
 | profile | TEXT | 自己紹介 |
+| course_plan | TEXT | 希望する講座内容（申請時） |
 | email | VARCHAR(255) | 連絡先 |
 | gcal_ics_url | TEXT | GoogleカレンダーのICS URL（未連携なら空） |
 | gcal_cache | LONGTEXT | ICS解析結果のキャッシュ（JSON） |
 | gcal_fetched_at | DATETIME | 最終取得日時 |
 | applied_at | DATETIME | |
 | approved_at | DATETIME | |
+| interview_at | DATETIME | 面接日（運営のみ） |
+| admin_note | TEXT | 管理メモ（運営のみ） |
 
 ### 3.2 wp_ssb_courses（講座）
 
@@ -180,6 +183,12 @@ vendor/
 - 一覧に申請内容を表示し、承認 / 却下ボタンを配置
 - 承認時：`status = approved`、`approved_at` を記録、本人に通知メール
 - 却下時：`status = rejected`、本人に通知メール
+- 一覧の申請内容は折りたたみ表示（既定は閉じた状態）
+- 表示名をクリックすると詳細画面を開き、運営用に面接日（`interview_at`）と
+  メモ（`admin_note`）を登録できる。どちらも講師には通知しない
+- 削除ボタンで申請を削除できる。却下された人が再申請できるようにするための操作で、
+  WordPress ユーザーアカウントは残し `ssb_instructor` ロールのみ外す。
+  講座が登録されている場合は予約データが孤立するため削除しない
 
 **権限**
 - `ssb_instructor` ロールを追加し、`read` と独自ケーパビリティ `ssb_manage_own_courses` を付与

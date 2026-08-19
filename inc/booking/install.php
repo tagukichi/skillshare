@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
  * インストール処理のバージョン。スキーマや管理対象の固定ページを変更したら必ず上げる。
  * 上げると次に wp-admin を開いた時点で ssb_install() が再実行される。
  */
-define( 'SSB_DB_VERSION', '1.1.0' );
+define( 'SSB_DB_VERSION', '1.2.0' );
 
 /**
  * バージョンを保存するオプション名.
@@ -90,6 +90,8 @@ function ssb_get_schema() {
 		gcal_fetched_at datetime DEFAULT NULL,
 		applied_at datetime DEFAULT NULL,
 		approved_at datetime DEFAULT NULL,
+		interview_at datetime DEFAULT NULL,
+		admin_note text,
 		PRIMARY KEY  (id),
 		KEY user_id (user_id)
 	) {$charset_collate};";

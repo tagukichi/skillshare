@@ -399,3 +399,97 @@ function ssb_get_apply_feedback() {
 
 	return $data;
 }
+
+/* -------------------------------------------------------------------------
+ * 運営用の項目・削除
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 面接日と管理メモを更新する.
+ *
+ * どちらも運営だけが見る項目で、講師には通知しない。
+ *
+ * @param int    $id           講師ID。
+ * @param string $interview_at 面接日時（Y-m-d H:i:s）。空文字なら未設定に戻す。
+ * @param string $admin_note   管理メモ。
+ * @return bool
+ */
+function ssb_update_instructor_admin_fields( $id, $interview_at, $admin_note ) {
+	global $wpdb;
+
+	$result = $wpdb->update(
+		ssb_table( 'instructors' ),
+		array(
+			'interview_at' => '' === $interview_at ? null : $interview_at,
+			'admin_note'   => $admin_note,
+		),
+		array( 'id' => (int) $id ),
+		array( '%s', '%s' ),
+		array( '%d' )
+	);
+
+	return false !== $result;
+}
+
+/**
+ * 講師が持っている講座の件数を返す.
+ *
+ * @param int $instructor_id 講師ID。
+ * @return int
+ */
+function ssb_count_instructor_courses( $instructor_id ) {
+	global $wpdb;
+
+	$table = ssb_table( 'courses' );
+
+	return (int) $wpdb->get_var(
+		$wpdb->prepare( "SELECT COUNT(*) FROM `{$table}` WHERE instructor_id = %d", (int) $instructor_id )
+	);
+}
+
+/**
+ * 講師申請を削除する.
+ *
+ * 却下された人が再申請できるようにするための操作。
+ * WordPress ユーザーアカウント自体は消さず、講師ロールだけ外す。
+ * 講座を持っている場合は、予約データが孤立するため削除しない。
+ *
+ * @param int $id 講師ID。
+ * @return true|WP_Error
+ */
+function ssb_delete_instructor( $id ) {
+	global $wpdb;
+
+	$instructor = ssb_get_instructor( $id );
+
+	if ( ! $instructor ) {
+		return new WP_Error( 'ssb_not_found', '対象の申請が見つかりません。' );
+	}
+
+	$courses = ssb_count_instructor_courses( $id );
+	if ( $courses > 0 ) {
+		return new WP_Error(
+			'ssb_has_courses',
+			sprintf( '講座が %d 件登録されているため削除できません。先に講座を削除してください。', $courses )
+		);
+	}
+
+	$deleted = $wpdb->delete( ssb_table( 'instructors' ), array( 'id' => (int) $id ), array( '%d' ) );
+
+	if ( ! $deleted ) {
+		return new WP_Error( 'ssb_delete_failed', '削除に失敗しました。' );
+	}
+
+	$user = get_user_by( 'id', (int) $instructor->user_id );
+
+	if ( $user && in_array( SSB_INSTRUCTOR_ROLE, (array) $user->roles, true ) ) {
+		$user->remove_role( SSB_INSTRUCTOR_ROLE );
+
+		// ロールが空だとログイン後に何もできなくなるため、購読者を残す。
+		if ( ! $user->roles ) {
+			$user->set_role( 'subscriber' );
+		}
+	}
+
+	return true;
+}
