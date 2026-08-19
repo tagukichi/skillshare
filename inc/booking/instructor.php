@@ -470,7 +470,7 @@ function ssb_delete_instructor( $id ) {
 	if ( $courses > 0 ) {
 		return new WP_Error(
 			'ssb_has_courses',
-			sprintf( '講座が %d 件登録されているため削除できません。先に講座を削除してください。', $courses )
+			sprintf( '講座が %d 件登録されているため削除できません。', $courses )
 		);
 	}
 
@@ -493,3 +493,200 @@ function ssb_delete_instructor( $id ) {
 
 	return true;
 }
+
+/* -------------------------------------------------------------------------
+ * マイページ（アクセス制御と共通のフラッシュ）
+ * ---------------------------------------------------------------------- */
+
+/**
+ * ログイン中の承認済み講師を返す.
+ *
+ * マイページの各操作は必ずこれで本人を特定すること。
+ *
+ * @return object|null 承認済み講師でなければ null。
+ */
+function ssb_current_instructor() {
+	if ( ! is_user_logged_in() ) {
+		return null;
+	}
+
+	$instructor = ssb_get_instructor_by_user_id( get_current_user_id() );
+
+	if ( ! $instructor || 'approved' !== $instructor->status ) {
+		return null;
+	}
+
+	return $instructor;
+}
+
+/**
+ * マイページのアクセス制限.
+ *
+ * 未ログインはログイン画面へ、承認済みでなければトップへ。
+ *
+ * @return void
+ */
+function ssb_restrict_mypage() {
+	if ( ! is_page() ) {
+		return;
+	}
+
+	if ( 'mypage' !== (string) get_post_field( 'post_name', get_queried_object_id() ) ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( ssb_get_page_url( 'mypage' ) ) );
+		exit;
+	}
+
+	if ( ! ssb_current_instructor() ) {
+		wp_safe_redirect( home_url( '/' ) );
+		exit;
+	}
+}
+add_action( 'template_redirect', 'ssb_restrict_mypage' );
+
+/**
+ * マイページの URL を返す.
+ *
+ * @param array<string,string> $args クエリ引数。
+ * @return string
+ */
+function ssb_mypage_url( $args = array() ) {
+	return $args ? add_query_arg( $args, ssb_get_page_url( 'mypage' ) ) : ssb_get_page_url( 'mypage' );
+}
+
+/**
+ * エラーと入力値を預けてマイページへ戻す.
+ *
+ * @param string[]             $errors エラーメッセージ。
+ * @param array<string,mixed>  $input  入力値（再表示用）。
+ * @param array<string,string> $args   戻り先のクエリ引数。
+ * @return void
+ */
+function ssb_mypage_fail( $errors, $input, $args = array() ) {
+	set_transient(
+		'ssb_mypage_' . get_current_user_id(),
+		array(
+			'errors' => $errors,
+			'input'  => $input,
+		),
+		10 * MINUTE_IN_SECONDS
+	);
+
+	wp_safe_redirect( ssb_mypage_url( $args ) );
+	exit;
+}
+
+/**
+ * 成功メッセージ付きでマイページへ戻す.
+ *
+ * @param string               $message メッセージキー。
+ * @param array<string,string> $args    戻り先のクエリ引数。
+ * @return void
+ */
+function ssb_mypage_done( $message, $args = array() ) {
+	wp_safe_redirect( ssb_mypage_url( array_merge( $args, array( 'ssb_msg' => $message ) ) ) );
+	exit;
+}
+
+/**
+ * 直前のマイページ操作のエラーと入力値を取り出す.
+ *
+ * 一度読んだら消す。
+ *
+ * @return array<string,mixed>|null
+ */
+function ssb_get_mypage_feedback() {
+	if ( ! is_user_logged_in() ) {
+		return null;
+	}
+
+	$key  = 'ssb_mypage_' . get_current_user_id();
+	$data = get_transient( $key );
+
+	if ( ! is_array( $data ) ) {
+		return null;
+	}
+
+	delete_transient( $key );
+
+	return $data;
+}
+
+/* -------------------------------------------------------------------------
+ * プロフィール編集
+ * ---------------------------------------------------------------------- */
+
+/**
+ * プロフィールを更新する.
+ *
+ * 申請時の course_plan は審査の記録なので、ここでは編集させない。
+ *
+ * @param int                 $id   講師ID。
+ * @param array<string,mixed> $data display_name / email / profile。
+ * @return bool
+ */
+function ssb_update_instructor_profile( $id, $data ) {
+	global $wpdb;
+
+	$result = $wpdb->update(
+		ssb_table( 'instructors' ),
+		array(
+			'display_name' => $data['display_name'],
+			'email'        => $data['email'],
+			'profile'      => $data['profile'],
+		),
+		array( 'id' => (int) $id ),
+		array( '%s', '%s', '%s' ),
+		array( '%d' )
+	);
+
+	return false !== $result;
+}
+
+/**
+ * プロフィール保存の受け口.
+ *
+ * @return void
+ */
+function ssb_handle_save_profile() {
+	check_admin_referer( 'ssb_save_profile', 'ssb_profile_nonce' );
+
+	$instructor = ssb_current_instructor();
+
+	if ( ! $instructor ) {
+		wp_safe_redirect( home_url( '/' ) );
+		exit;
+	}
+
+	$input = array(
+		'display_name' => isset( $_POST['display_name'] ) ? sanitize_text_field( wp_unslash( $_POST['display_name'] ) ) : '',
+		'email'        => isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '',
+		'profile'      => isset( $_POST['profile'] ) ? sanitize_textarea_field( wp_unslash( $_POST['profile'] ) ) : '',
+	);
+
+	$errors = array();
+
+	if ( '' === $input['display_name'] ) {
+		$errors[] = '表示名を入力してください。';
+	}
+	if ( ! is_email( $input['email'] ) ) {
+		$errors[] = 'メールアドレスを正しい形式で入力してください。';
+	}
+	if ( '' === $input['profile'] ) {
+		$errors[] = '自己紹介を入力してください。';
+	}
+
+	if ( $errors ) {
+		ssb_mypage_fail( $errors, $input, array( 'tab' => 'profile' ) );
+	}
+
+	if ( ! ssb_update_instructor_profile( $instructor->id, $input ) ) {
+		ssb_mypage_fail( array( '保存に失敗しました。時間をおいて再度お試しください。' ), $input, array( 'tab' => 'profile' ) );
+	}
+
+	ssb_mypage_done( 'profile_saved', array( 'tab' => 'profile' ) );
+}
+add_action( 'admin_post_ssb_save_profile', 'ssb_handle_save_profile' );

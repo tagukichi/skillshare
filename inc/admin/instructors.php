@@ -293,7 +293,7 @@ function ssb_admin_instructor_notices() {
 		'saved'             => array( 'success', '保存しました。' ),
 		'deleted'           => array( 'success', '申請を削除しました。同じ方が再度申請できます。' ),
 		'bad_date'          => array( 'error', '面接日の形式が正しくありません。' ),
-		'ssb_has_courses'   => array( 'error', '講座が登録されているため削除できません。先に講座を削除してください。' ),
+		'ssb_has_courses'   => array( 'error', '講座が登録されているため削除できません。' ),
 		'ssb_not_found'     => array( 'error', '対象の申請が見つかりません。' ),
 		'ssb_delete_failed' => array( 'error', '削除に失敗しました。' ),
 		'error'             => array( 'error', '処理できませんでした。' ),

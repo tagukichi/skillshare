@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
  * インストール処理のバージョン。スキーマや管理対象の固定ページを変更したら必ず上げる。
  * 上げると次に wp-admin を開いた時点で ssb_install() が再実行される。
  */
-define( 'SSB_DB_VERSION', '1.2.0' );
+define( 'SSB_DB_VERSION', '1.3.0' );
 
 /**
  * バージョンを保存するオプション名.
@@ -199,9 +199,13 @@ add_action( 'admin_init', 'ssb_maybe_install' );
  */
 function ssb_get_managed_pages() {
 	return array(
-		'apply' => array(
+		'apply'  => array(
 			'title'    => '講師申請',
 			'template' => 'page-apply.php',
+		),
+		'mypage' => array(
+			'title'    => '講師マイページ',
+			'template' => 'page-mypage.php',
 		),
 	);
 }
