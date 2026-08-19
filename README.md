@@ -19,14 +19,19 @@ WordPress テーマ。仕様は [SPEC.md](SPEC.md) が唯一の正とする。
 
 1. このディレクトリを `wp-content/themes/skillshare/` に配置する。
 2. 管理画面 → 外観 → テーマ から「Skillshare」を有効化する。
-   有効化時（`after_switch_theme`）に `wp_ssb_*` テーブルと固定ページを自動作成する。
-3. 依存ライブラリを入れる（実装順序 8 以降で必要）。
+   有効化時（`after_switch_theme`）に `wp_ssb_*` テーブルを自動作成する。
+   スキーマを変更したときは `SSB_DB_VERSION` を上げれば、次に wp-admin を開いた時点で
+   `dbDelta()` が再実行される（テーマを切り替え直す必要はない）。
+3. **設定 → 一般 → タイムゾーンを「東京」にする。**
+   日時はすべてサイト設定のタイムゾーンのローカル時刻で保存するため、
+   UTC のままだと予約枠の時刻が 9 時間ずれる。
+4. 依存ライブラリを入れる（実装順序 8 以降で必要）。
 
    ```bash
    composer install
    ```
 
-4. `wp-config.php` に Stripe のキーを定数で定義する。**DB に保存しない。Git に入れない。**
+5. `wp-config.php` に Stripe のキーを定数で定義する。**DB に保存しない。Git に入れない。**
 
    ```php
    define('SSB_STRIPE_SECRET', 'sk_test_xxx');
@@ -34,7 +39,7 @@ WordPress テーマ。仕様は [SPEC.md](SPEC.md) が唯一の正とする。
    define('SSB_STRIPE_WEBHOOK_SECRET', 'whsec_xxx');
    ```
 
-5. パーマリンク設定を「投稿名」にし、一度保存してリライトルールを反映する。
+6. パーマリンク設定を「投稿名」にし、一度保存してリライトルールを反映する。
 
 ## ディレクトリ構成
 
@@ -92,7 +97,7 @@ Local に同梱の Mailpit で送信内容を確認できる（Local の管理�
 SPEC.md「7. 実装順序」に従って上から進める。
 
 - [x] 1. テーマの雛形作成、`functions.php` の読み込み構成
-- [ ] 2. DBテーブル作成（`install.php`）
+- [x] 2. DBテーブル作成（`install.php`）
 - [ ] 3. 講師申請フォーム → 管理画面での承認
 - [ ] 4. 講師マイページ（プロフィール・講座管理）
 - [ ] 5. 予約枠の一括登録
