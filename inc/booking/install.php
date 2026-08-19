@@ -1,10 +1,10 @@
 <?php
 /**
- * テーブル作成.
+ * テーブルと固定ページの作成.
  *
- * テーマ有効化時（after_switch_theme）に dbDelta() でテーブルを作成する。
- * スキーマを変更したら SSB_DB_VERSION を上げること。管理画面アクセス時に
- * バージョン差分を検知して自動で dbDelta() を再実行する。
+ * テーマ有効化時（after_switch_theme）にテーブルと SPEC 5 の固定ページを作成する。
+ * スキーマや管理対象ページを変更したら SSB_DB_VERSION を上げること。管理画面アクセス時に
+ * バージョン差分を検知して自動で再実行する。
  *
  * @package skillshare
  */
@@ -12,9 +12,10 @@
 defined( 'ABSPATH' ) || exit;
 
 /**
- * スキーマのバージョン。スキーマを変更したら必ず上げる。
+ * インストール処理のバージョン。スキーマや管理対象の固定ページを変更したら必ず上げる。
+ * 上げると次に wp-admin を開いた時点で ssb_install() が再実行される。
  */
-define( 'SSB_DB_VERSION', '1.0.0' );
+define( 'SSB_DB_VERSION', '1.1.0' );
 
 /**
  * バージョンを保存するオプション名.
@@ -163,6 +164,8 @@ function ssb_install() {
 		dbDelta( $sql );
 	}
 
+	ssb_install_pages();
+
 	update_option( SSB_DB_VERSION_OPTION, SSB_DB_VERSION );
 }
 add_action( 'after_switch_theme', 'ssb_install' );
@@ -182,3 +185,75 @@ function ssb_maybe_install() {
 	ssb_install();
 }
 add_action( 'admin_init', 'ssb_maybe_install' );
+
+/**
+ * テーマが管理する固定ページの定義.
+ *
+ * 実装順序に合わせてステップごとに追加していく。
+ * ここに登録したページは有効化時に自動作成され、template のファイルが
+ * templates/ 配下から読み込まれる（functions.php の ssb_template_include）。
+ *
+ * @return array<string,array<string,string>> スラッグ => title / template。
+ */
+function ssb_get_managed_pages() {
+	return array(
+		'apply' => array(
+			'title'    => '講師申請',
+			'template' => 'page-apply.php',
+		),
+	);
+}
+
+/**
+ * 固定ページを作成する.
+ *
+ * 同じスラッグのページが既にあれば何もしない。タイトルや本文は上書きしないので、
+ * 運営が管理画面で文言を編集しても再インストールで消えない。
+ *
+ * @return void
+ */
+function ssb_install_pages() {
+	foreach ( ssb_get_managed_pages() as $slug => $page ) {
+		if ( ssb_get_page_by_slug( $slug ) ) {
+			continue;
+		}
+
+		wp_insert_post(
+			array(
+				'post_type'      => 'page',
+				'post_name'      => $slug,
+				'post_title'     => $page['title'],
+				'post_status'    => 'publish',
+				'post_content'   => '',
+				'comment_status' => 'closed',
+				'ping_status'    => 'closed',
+			)
+		);
+	}
+}
+
+/**
+ * スラッグから固定ページを取得する.
+ *
+ * @param string $slug スラッグ。
+ * @return WP_Post|null 見つからなければ null。
+ */
+function ssb_get_page_by_slug( $slug ) {
+	$page = get_page_by_path( $slug );
+
+	return ( $page instanceof WP_Post ) ? $page : null;
+}
+
+/**
+ * 管理対象ページの URL を返す.
+ *
+ * ページが未作成でも壊れないよう、その場合はスラッグから URL を組み立てる。
+ *
+ * @param string $slug スラッグ。
+ * @return string
+ */
+function ssb_get_page_url( $slug ) {
+	$page = ssb_get_page_by_slug( $slug );
+
+	return $page ? (string) get_permalink( $page ) : home_url( '/' . $slug . '/' );
+}

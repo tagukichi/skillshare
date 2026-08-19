@@ -63,3 +63,31 @@ function ssb_enqueue_assets() {
 	wp_enqueue_style( 'skillshare-main', SSB_URL . '/assets/css/main.css', array( 'skillshare-theme' ), SSB_VERSION );
 }
 add_action( 'wp_enqueue_scripts', 'ssb_enqueue_assets' );
+
+/**
+ * templates/ 配下のテンプレートを固定ページに割り当てる.
+ *
+ * WordPress は page-{slug}.php をテーマ直下からしか探さないため、
+ * ssb_get_managed_pages()（inc/booking/install.php）の定義を見て
+ * templates/ 配下から読み込む。
+ *
+ * @param string $template 既定のテンプレートパス。
+ * @return string
+ */
+function ssb_template_include( $template ) {
+	if ( ! is_page() ) {
+		return $template;
+	}
+
+	$pages = ssb_get_managed_pages();
+	$slug  = (string) get_post_field( 'post_name', get_queried_object_id() );
+
+	if ( empty( $pages[ $slug ]['template'] ) ) {
+		return $template;
+	}
+
+	$path = SSB_PATH . '/templates/' . $pages[ $slug ]['template'];
+
+	return file_exists( $path ) ? $path : $template;
+}
+add_filter( 'template_include', 'ssb_template_include' );
