@@ -519,9 +519,12 @@ function ssb_enqueue_calendar() {
 		'skillshare-calendar',
 		'window.ssbCalendarData = ' . wp_json_encode(
 			array(
-				'courseId' => $course_id,
-				'today'    => current_time( 'Y-m-d' ),
-				'slots'    => ssb_get_calendar_slots( $course_id ),
+				'courseId'    => $course_id,
+				'today'       => current_time( 'Y-m-d' ),
+				'slots'       => ssb_get_calendar_slots( $course_id ),
+				'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
+				'nonce'       => wp_create_nonce( SSB_BOOKING_NONCE ),
+				'holdMinutes' => SSB_HOLD_MINUTES,
 			)
 		) . ';',
 		'before'
@@ -673,3 +676,201 @@ function ssb_handle_bulk_delete_slots() {
 	);
 }
 add_action( 'admin_post_ssb_bulk_delete_slots', 'ssb_handle_bulk_delete_slots' );
+
+/* -------------------------------------------------------------------------
+ * 仮押さえ
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 仮押さえの保持時間（分）.
+ *
+ * Stripe Checkout へ進む時点で 30 分に延長する（Stripe セッションの
+ * 最短有効期限が 30 分のため）。延長は実装順序 8 で行う。
+ */
+define( 'SSB_HOLD_MINUTES', 15 );
+
+/**
+ * 枠を仮押さえする.
+ *
+ * SELECT ... FOR UPDATE を含むトランザクションで行を掴んでから更新するので、
+ * 同じ枠を同時にクリックしても片方しか取れない。
+ *
+ * @param int $slot_id 枠ID。
+ * @return array<string,mixed>|WP_Error token / expires_at / slot。
+ */
+function ssb_hold_slot( $slot_id ) {
+	global $wpdb;
+
+	$slot_id = (int) $slot_id;
+
+	if ( $slot_id <= 0 ) {
+		return new WP_Error( 'ssb_slot_not_found', 'この枠は見つかりませんでした。' );
+	}
+
+	// 期限切れを先に解放しておく（トランザクションの外で済ませる）。
+	ssb_release_expired_holds();
+
+	$slots = ssb_table( 'slots' );
+	$now   = new DateTimeImmutable( current_time( 'mysql' ), wp_timezone() );
+
+	$wpdb->query( 'START TRANSACTION' );
+
+	$slot = $wpdb->get_row(
+		$wpdb->prepare( "SELECT * FROM `{$slots}` WHERE id = %d FOR UPDATE", $slot_id )
+	);
+
+	if ( ! $slot ) {
+		$wpdb->query( 'ROLLBACK' );
+
+		return new WP_Error( 'ssb_slot_not_found', 'この枠は見つかりませんでした。' );
+	}
+
+	if ( 'open' !== $slot->status ) {
+		$wpdb->query( 'ROLLBACK' );
+
+		return new WP_Error( 'ssb_slot_taken', 'この枠はちょうど埋まりました。別の時間をお選びください。' );
+	}
+
+	if ( $slot->start_at <= $now->format( 'Y-m-d H:i:s' ) ) {
+		$wpdb->query( 'ROLLBACK' );
+
+		return new WP_Error( 'ssb_slot_past', 'この枠は受付を終了しました。' );
+	}
+
+	$token   = wp_generate_uuid4();
+	$expires = $now->modify( '+' . SSB_HOLD_MINUTES . ' minutes' )->format( 'Y-m-d H:i:s' );
+
+	$updated = $wpdb->query(
+		$wpdb->prepare(
+			"UPDATE `{$slots}`
+			SET status = 'held', hold_token = %s, hold_expires_at = %s
+			WHERE id = %d AND status = 'open'",
+			$token,
+			$expires,
+			$slot_id
+		)
+	);
+
+	if ( ! $updated ) {
+		$wpdb->query( 'ROLLBACK' );
+
+		return new WP_Error( 'ssb_slot_taken', 'この枠はちょうど埋まりました。別の時間をお選びください。' );
+	}
+
+	$wpdb->query( 'COMMIT' );
+
+	return array(
+		'slot_id'    => $slot_id,
+		'token'      => $token,
+		'expires_at' => $expires,
+		'date'       => substr( (string) $slot->start_at, 0, 10 ),
+		'start'      => substr( (string) $slot->start_at, 11, 5 ),
+		'end'        => substr( (string) $slot->end_at, 11, 5 ),
+		'label'      => mysql2date( 'Y年n月j日(D) H:i', $slot->start_at ) . '〜' . mysql2date( 'H:i', $slot->end_at ),
+	);
+}
+
+/**
+ * 仮押さえを解放する.
+ *
+ * トークンが一致するときだけ解放するので、他人の仮押さえは外せない。
+ *
+ * @param int    $slot_id 枠ID。
+ * @param string $token   仮押さえトークン。
+ * @return bool
+ */
+function ssb_release_hold( $slot_id, $token ) {
+	global $wpdb;
+
+	if ( ! $token ) {
+		return false;
+	}
+
+	$slots = ssb_table( 'slots' );
+
+	$result = $wpdb->query(
+		$wpdb->prepare(
+			"UPDATE `{$slots}`
+			SET status = 'open', hold_token = NULL, hold_expires_at = NULL
+			WHERE id = %d AND status = 'held' AND hold_token = %s",
+			(int) $slot_id,
+			$token
+		)
+	);
+
+	return (bool) $result;
+}
+
+/* -------------------------------------------------------------------------
+ * Ajax
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Ajax の nonce アクション名.
+ */
+define( 'SSB_BOOKING_NONCE', 'ssb_booking' );
+
+/**
+ * Ajax：枠を仮押さえする.
+ *
+ * @return void
+ */
+function ssb_ajax_hold_slot() {
+	check_ajax_referer( SSB_BOOKING_NONCE, 'nonce' );
+
+	$slot_id = isset( $_POST['slot_id'] ) ? absint( wp_unslash( $_POST['slot_id'] ) ) : 0;
+	$result  = ssb_hold_slot( $slot_id );
+
+	if ( is_wp_error( $result ) ) {
+		wp_send_json_error(
+			array(
+				'code'    => $result->get_error_code(),
+				'message' => $result->get_error_message(),
+			)
+		);
+	}
+
+	wp_send_json_success( $result );
+}
+add_action( 'wp_ajax_ssb_hold_slot', 'ssb_ajax_hold_slot' );
+add_action( 'wp_ajax_nopriv_ssb_hold_slot', 'ssb_ajax_hold_slot' );
+
+/**
+ * Ajax：仮押さえを解放する.
+ *
+ * @return void
+ */
+function ssb_ajax_release_slot() {
+	check_ajax_referer( SSB_BOOKING_NONCE, 'nonce' );
+
+	$slot_id = isset( $_POST['slot_id'] ) ? absint( wp_unslash( $_POST['slot_id'] ) ) : 0;
+	$token   = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
+
+	ssb_release_hold( $slot_id, $token );
+
+	// 解放できたかどうかに関わらず、呼び出し側は選択解除して構わない。
+	wp_send_json_success();
+}
+add_action( 'wp_ajax_ssb_release_slot', 'ssb_ajax_release_slot' );
+add_action( 'wp_ajax_nopriv_ssb_release_slot', 'ssb_ajax_release_slot' );
+
+/**
+ * Ajax：空き枠を取り直す.
+ *
+ * 仮押さえに失敗したときにカレンダーを最新化するために使う。
+ *
+ * @return void
+ */
+function ssb_ajax_refresh_slots() {
+	check_ajax_referer( SSB_BOOKING_NONCE, 'nonce' );
+
+	$course_id = isset( $_POST['course_id'] ) ? absint( wp_unslash( $_POST['course_id'] ) ) : 0;
+
+	if ( ! $course_id || ! ssb_get_published_course( $course_id ) ) {
+		wp_send_json_error( array( 'message' => '講座が見つかりません。' ) );
+	}
+
+	wp_send_json_success( array( 'slots' => ssb_get_calendar_slots( $course_id ) ) );
+}
+add_action( 'wp_ajax_ssb_refresh_slots', 'ssb_ajax_refresh_slots' );
+add_action( 'wp_ajax_nopriv_ssb_refresh_slots', 'ssb_ajax_refresh_slots' );

@@ -1,9 +1,11 @@
 /**
- * 予約カレンダー.
+ * 予約カレンダーと仮押さえ.
  *
- * サーバーから渡された空き枠（window.ssbCalendarData）を月表示に並べる。
- * 実装順序 6 の時点では枠を選んでも予約はできない。仮押さえと入力フォームは
- * 実装順序 7 で onSlotClick に載せる。
+ * 空き枠を月表示に並べ、枠を選ぶと Ajax で仮押さえを取ってから入力フォームを開く。
+ * 仮押さえはサーバー側で SELECT ... FOR UPDATE を含むトランザクションで行うので、
+ * 同時に押されても片方しか取れない。
+ *
+ * 決済への接続（Stripe Checkout）は実装順序 8 で入る。
  */
 (function () {
 	'use strict';
@@ -17,19 +19,24 @@
 	var data = window.ssbCalendarData;
 	var WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
-	// 日付ごとに枠をまとめる。
+	var messageBox = document.getElementById('ssb-calendar-message');
+	var booking = document.getElementById('ssb-booking');
+	var fieldSlot = document.getElementById('ssb-field-slot-id');
+	var fieldToken = document.getElementById('ssb-field-hold-token');
+	var slotLabel = document.getElementById('ssb-booking-slot');
+	var countdownEl = document.getElementById('ssb-booking-countdown');
+	var cancelButton = document.getElementById('ssb-booking-cancel');
+
 	var byDate = {};
-	(data.slots || []).forEach(function (slot) {
-		if (!byDate[slot.date]) {
-			byDate[slot.date] = [];
-		}
-		byDate[slot.date].push(slot);
-	});
-
-	var availableDates = Object.keys(byDate).sort();
-
+	var availableDates = [];
 	var view = null;      // { year: 2026, month: 7 }  month は 0 始まり
 	var selected = null;  // 'YYYY-MM-DD'
+	var hold = null;      // { slotId: 1, token: '...' }
+	var deadline = 0;
+	var ticker = null;
+	var busy = false;
+
+	/* ---------------------------------------------------------------- 汎用 */
 
 	function pad(n) {
 		return n < 10 ? '0' + n : String(n);
@@ -57,20 +64,234 @@
 		return node;
 	}
 
-	/** 空き枠がある月の一覧（重複なし・昇順）。 */
-	function availableMonths() {
-		var months = [];
+	function showMessage(text) {
+		if (!messageBox) {
+			return;
+		}
 
-		availableDates.forEach(function (date) {
-			var key = date.slice(0, 7);
+		messageBox.textContent = text;
+		messageBox.hidden = !text;
+	}
 
-			if (months.indexOf(key) === -1) {
-				months.push(key);
-			}
+	function post(action, payload) {
+		var body = new FormData();
+
+		body.append('action', action);
+		body.append('nonce', data.nonce);
+
+		Object.keys(payload || {}).forEach(function (key) {
+			body.append(key, payload[key]);
 		});
 
-		return months;
+		return fetch(data.ajaxUrl, {
+			method: 'POST',
+			body: body,
+			credentials: 'same-origin'
+		}).then(function (response) {
+			return response.json();
+		});
 	}
+
+	/* ------------------------------------------------------------ 枠データ */
+
+	function indexSlots(slots) {
+		byDate = {};
+
+		(slots || []).forEach(function (slot) {
+			if (!byDate[slot.date]) {
+				byDate[slot.date] = [];
+			}
+
+			byDate[slot.date].push(slot);
+		});
+
+		// 確保中の枠はサーバー側の空き一覧から外れるので、選択中と分かるように戻す。
+		if (hold && hold.date) {
+			var already = (byDate[hold.date] || []).some(function (slot) {
+				return String(slot.id) === String(hold.slotId);
+			});
+
+			if (!already) {
+				if (!byDate[hold.date]) {
+					byDate[hold.date] = [];
+				}
+
+				byDate[hold.date].push({
+					id: hold.slotId,
+					date: hold.date,
+					start: hold.start,
+					end: hold.end
+				});
+
+				byDate[hold.date].sort(function (a, b) {
+					return a.start < b.start ? -1 : 1;
+				});
+			}
+		}
+
+		availableDates = Object.keys(byDate).sort();
+	}
+
+	function refreshSlots() {
+		return post('ssb_refresh_slots', { course_id: data.courseId }).then(function (res) {
+			if (!res || !res.success) {
+				return;
+			}
+
+			indexSlots(res.data.slots);
+
+			// 選択中の日付が無くなっていたら、近い日に寄せる。
+			if (!selected || !byDate[selected]) {
+				selected = availableDates.filter(function (date) {
+					return date.slice(0, 7) === monthKey(view.year, view.month);
+				})[0] || availableDates[0] || null;
+
+				if (selected) {
+					var parts = selected.split('-');
+					view = { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10) - 1 };
+				}
+			}
+
+			render();
+		});
+	}
+
+	/* -------------------------------------------------------- 仮押さえと申込 */
+
+	function formatRemaining(ms) {
+		var total = Math.max(0, Math.floor(ms / 1000));
+
+		return pad(Math.floor(total / 60)) + ':' + pad(total % 60);
+	}
+
+	function stopTicker() {
+		if (ticker) {
+			clearInterval(ticker);
+			ticker = null;
+		}
+	}
+
+	function startTicker() {
+		stopTicker();
+
+		ticker = setInterval(function () {
+			var left = deadline - Date.now();
+
+			if (countdownEl) {
+				countdownEl.textContent = formatRemaining(left);
+			}
+
+			if (left <= 0) {
+				stopTicker();
+				hold = null;
+				closeBooking();
+				showMessage('確保の時間が過ぎました。もう一度お選びください。');
+				refreshSlots();
+			}
+		}, 1000);
+	}
+
+	function openBooking(result) {
+		hold = {
+			slotId: result.slot_id,
+			token: result.token,
+			date: result.date,
+			start: result.start,
+			end: result.end
+		};
+
+		if (fieldSlot) {
+			fieldSlot.value = result.slot_id;
+		}
+
+		if (fieldToken) {
+			fieldToken.value = result.token;
+		}
+
+		if (slotLabel) {
+			slotLabel.textContent = result.label;
+		}
+
+		deadline = Date.now() + (data.holdMinutes || 15) * 60 * 1000;
+
+		if (countdownEl) {
+			countdownEl.textContent = formatRemaining(deadline - Date.now());
+		}
+
+		startTicker();
+
+		if (booking) {
+			booking.hidden = false;
+			booking.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+	}
+
+	function closeBooking() {
+		stopTicker();
+
+		if (booking) {
+			booking.hidden = true;
+		}
+
+		if (fieldSlot) {
+			fieldSlot.value = '';
+		}
+
+		if (fieldToken) {
+			fieldToken.value = '';
+		}
+
+		render();
+	}
+
+	function releaseHold() {
+		if (!hold) {
+			return Promise.resolve();
+		}
+
+		var current = hold;
+		hold = null;
+
+		return post('ssb_release_slot', { slot_id: current.slotId, token: current.token });
+	}
+
+	function onSlotClick(event) {
+		var slotId = event.currentTarget.dataset.slotId;
+
+		if (busy || !slotId) {
+			return;
+		}
+
+		// すでに自分が確保している枠なら何もしない。
+		if (hold && String(hold.slotId) === String(slotId)) {
+			return;
+		}
+
+		busy = true;
+		showMessage('');
+
+		// すでに別の枠を確保していたら先に返す。
+		releaseHold().then(function () {
+			return post('ssb_hold_slot', { slot_id: slotId });
+		}).then(function (res) {
+			busy = false;
+
+			if (res && res.success) {
+				openBooking(res.data);
+				refreshSlots();
+				return;
+			}
+
+			closeBooking();
+			showMessage((res && res.data && res.data.message) || '枠を確保できませんでした。');
+			refreshSlots();
+		}).catch(function () {
+			busy = false;
+			showMessage('通信に失敗しました。時間をおいて再度お試しください。');
+		});
+	}
+
+	/* ------------------------------------------------------------ 描画 */
 
 	function shiftMonth(step) {
 		var month = view.month + step;
@@ -98,9 +319,18 @@
 		render();
 	}
 
-	/** 枠を選んだとき。実装順序 7 でここに仮押さえを載せる。 */
-	function onSlotClick() {
-		return;
+	function availableMonths() {
+		var months = [];
+
+		availableDates.forEach(function (date) {
+			var key = date.slice(0, 7);
+
+			if (months.indexOf(key) === -1) {
+				months.push(key);
+			}
+		});
+
+		return months;
 	}
 
 	function renderNav() {
@@ -149,9 +379,9 @@
 		var first = new Date(view.year, view.month, 1);
 		var daysInMonth = new Date(view.year, view.month + 1, 0).getDate();
 		var row = el('tr');
+		var blank;
 
-		// 1日の曜日まで空セルで埋める。
-		for (var blank = 0; blank < first.getDay(); blank++) {
+		for (blank = 0; blank < first.getDay(); blank++) {
 			row.appendChild(el('td'));
 		}
 
@@ -212,14 +442,18 @@
 
 		if (!selected || !byDate[selected]) {
 			box.appendChild(el('p', 'ssb-muted', '日付を選ぶと空いている時間が表示されます。'));
+
 			return box;
 		}
 
 		var parts = selected.split('-');
-		var heading = parts[0] + '年' + Number(parts[1]) + '月' + Number(parts[2]) + '日'
-			+ '（' + WEEKDAYS[new Date(parts[0], parts[1] - 1, parts[2]).getDay()] + '）';
+		var weekday = WEEKDAYS[new Date(parts[0], parts[1] - 1, parts[2]).getDay()];
 
-		box.appendChild(el('h3', 'ssb-calendar__times-title', heading));
+		box.appendChild(el(
+			'h3',
+			'ssb-calendar__times-title',
+			parts[0] + '年' + Number(parts[1]) + '月' + Number(parts[2]) + '日（' + weekday + '）'
+		));
 
 		var list = el('div', 'ssb-calendar__slots');
 
@@ -227,14 +461,16 @@
 			var button = el('button', 'ssb-calendar__slot', slot.start + '〜' + slot.end);
 			button.type = 'button';
 			button.dataset.slotId = String(slot.id);
-			button.disabled = true;
-			button.title = '予約機能は準備中です';
+
+			if (hold && hold.slotId === slot.id) {
+				button.classList.add('is-held');
+			}
+
 			button.addEventListener('click', onSlotClick);
 			list.appendChild(button);
 		});
 
 		box.appendChild(list);
-		box.appendChild(el('p', 'ssb-muted ssb-calendar__note', '予約の受付は準備中です。'));
 
 		return box;
 	}
@@ -244,6 +480,7 @@
 
 		if (!availableDates.length) {
 			root.appendChild(el('p', 'ssb-muted', '現在、予約できる枠がありません。'));
+
 			return;
 		}
 
@@ -252,18 +489,42 @@
 		root.appendChild(renderTimes());
 	}
 
-	function init() {
-		if (availableDates.length) {
-			var first = availableDates[0].split('-');
-			view = { year: parseInt(first[0], 10), month: parseInt(first[1], 10) - 1 };
-			selected = availableDates[0];
-		} else {
-			var today = (data.today || '').split('-');
-			view = { year: parseInt(today[0], 10), month: parseInt(today[1], 10) - 1 };
-		}
+	/* ------------------------------------------------------------ 初期化 */
 
-		render();
+	if (cancelButton) {
+		cancelButton.addEventListener('click', function () {
+			showMessage('');
+			releaseHold().then(function () {
+				closeBooking();
+				refreshSlots();
+			});
+		});
 	}
 
-	init();
+	// タブを閉じたときに掴んだままにしない。届かなくても期限切れで解放される。
+	window.addEventListener('pagehide', function () {
+		if (!hold || !navigator.sendBeacon) {
+			return;
+		}
+
+		var body = new FormData();
+		body.append('action', 'ssb_release_slot');
+		body.append('nonce', data.nonce);
+		body.append('slot_id', hold.slotId);
+		body.append('token', hold.token);
+		navigator.sendBeacon(data.ajaxUrl, body);
+	});
+
+	indexSlots(data.slots);
+
+	if (availableDates.length) {
+		var first = availableDates[0].split('-');
+		view = { year: parseInt(first[0], 10), month: parseInt(first[1], 10) - 1 };
+		selected = availableDates[0];
+	} else {
+		var today = (data.today || '').split('-');
+		view = { year: parseInt(today[0], 10), month: parseInt(today[1], 10) - 1 };
+	}
+
+	render();
 })();
