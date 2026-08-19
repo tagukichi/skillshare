@@ -21,6 +21,7 @@ if ( ! $ssb_me ) {
 $ssb_tabs = array(
 	'profile' => 'プロフィール',
 	'courses' => '講座管理',
+	'slots'   => '予約枠',
 );
 
 $ssb_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'profile';
@@ -34,6 +35,10 @@ $ssb_input    = isset( $ssb_feedback['input'] ) ? (array) $ssb_feedback['input']
 
 $ssb_msg = isset( $_GET['ssb_msg'] ) ? sanitize_key( wp_unslash( $_GET['ssb_msg'] ) ) : '';
 
+// 一括生成の結果（件数）。
+$ssb_created = isset( $_GET['created'] ) ? absint( wp_unslash( $_GET['created'] ) ) : 0;
+$ssb_skipped = isset( $_GET['skipped'] ) ? absint( wp_unslash( $_GET['skipped'] ) ) : 0;
+
 $ssb_notices = array(
 	'profile_saved'      => array( 'success', 'プロフィールを保存しました。' ),
 	'course_created'     => array( 'success', '講座を作成しました。' ),
@@ -41,6 +46,11 @@ $ssb_notices = array(
 	'course_published'   => array( 'success', '講座を公開しました。' ),
 	'course_unpublished' => array( 'success', '講座を非公開にしました。' ),
 	'course_forbidden'   => array( 'error', '対象の講座が見つかりません。' ),
+	'slot_deleted'           => array( 'success', '予約枠を削除しました。' ),
+	'slot_forbidden'         => array( 'error', '対象の予約枠が見つかりません。' ),
+	'ssb_slot_locked'        => array( 'error', '予約済み・仮押さえ中の枠は削除できません。' ),
+	'ssb_slot_not_found'     => array( 'error', '対象の予約枠が見つかりません。' ),
+	'ssb_slot_delete_failed' => array( 'error', '予約枠の削除に失敗しました。' ),
 	'error'              => array( 'error', '処理できませんでした。' ),
 );
 
@@ -57,6 +67,17 @@ get_header();
 		</a>
 	<?php endforeach; ?>
 </nav>
+
+<?php if ( 'slots_generated' === $ssb_msg ) : ?>
+	<div class="ssb-notice ssb-notice--success">
+		<p>
+			予約枠を <?php echo esc_html( (string) $ssb_created ); ?> 件作成しました。
+			<?php if ( $ssb_skipped > 0 ) : ?>
+				<span class="ssb-muted">（過去の日時、または同じ枠が既にあるため <?php echo esc_html( (string) $ssb_skipped ); ?> 件は作成していません）</span>
+			<?php endif; ?>
+		</p>
+	</div>
+<?php endif; ?>
 
 <?php if ( isset( $ssb_notices[ $ssb_msg ] ) ) : ?>
 	<div class="ssb-notice ssb-notice--<?php echo esc_attr( $ssb_notices[ $ssb_msg ][0] ); ?>">
@@ -287,6 +308,157 @@ get_header();
 				</tbody>
 			</table>
 		<?php endif; ?>
+
+	<?php endif; ?>
+
+<?php endif; ?>
+
+<?php if ( 'slots' === $ssb_tab ) : ?>
+
+	<?php
+	$ssb_my_courses = ssb_get_courses_by_instructor( $ssb_me->id );
+
+	$ssb_s_course = isset( $ssb_input['course_id'] ) ? (int) $ssb_input['course_id'] : 0;
+	$ssb_s_from   = isset( $ssb_input['start_date'] ) ? $ssb_input['start_date'] : current_time( 'Y-m-d' );
+	$ssb_s_to     = isset( $ssb_input['end_date'] ) ? $ssb_input['end_date'] : ( new DateTimeImmutable( current_time( 'Y-m-d' ), wp_timezone() ) )->modify( '+30 days' )->format( 'Y-m-d' );
+	$ssb_s_start  = isset( $ssb_input['start_time'] ) ? $ssb_input['start_time'] : '10:00';
+	$ssb_s_end    = isset( $ssb_input['end_time'] ) ? $ssb_input['end_time'] : '18:00';
+	$ssb_s_days   = isset( $ssb_input['weekdays'] ) ? array_map( 'intval', (array) $ssb_input['weekdays'] ) : array( 1, 2, 3, 4, 5 );
+	?>
+
+	<h2 class="ssb-section__title">予約枠をまとめて作る</h2>
+
+	<?php if ( ! $ssb_my_courses ) : ?>
+
+		<p class="ssb-muted">先に講座を作成してください。予約枠は講座に紐づきます。</p>
+		<p>
+			<a class="ssb-button" href="<?php echo esc_url( ssb_mypage_url( array( 'tab' => 'courses', 'course' => 'new' ) ) ); ?>">
+				新しい講座を作る
+			</a>
+		</p>
+
+	<?php else : ?>
+
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+			<?php wp_nonce_field( 'ssb_generate_slots', 'ssb_slots_nonce' ); ?>
+			<input type="hidden" name="action" value="ssb_generate_slots">
+
+			<div class="ssb-field">
+				<label class="ssb-field__label" for="ssb-slot-course">講座<span class="ssb-field__required">必須</span></label>
+				<select class="ssb-select" id="ssb-slot-course" name="course_id" required>
+					<option value="">選択してください</option>
+					<?php foreach ( $ssb_my_courses as $ssb_c ) : ?>
+						<option value="<?php echo esc_attr( (string) $ssb_c->id ); ?>" <?php selected( $ssb_s_course, (int) $ssb_c->id ); ?>>
+							<?php echo esc_html( $ssb_c->title ); ?>（<?php echo esc_html( (string) (int) $ssb_c->duration_min ); ?>分）
+						</option>
+					<?php endforeach; ?>
+				</select>
+				<p class="ssb-field__hint">1コマの長さは、選んだ講座の所要時間になります。</p>
+			</div>
+
+			<div class="ssb-field">
+				<label class="ssb-field__label" for="ssb-slot-from">期間<span class="ssb-field__required">必須</span></label>
+				<span style="display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;">
+					<input class="ssb-input" style="width:auto;" type="date" id="ssb-slot-from" name="start_date" required
+						value="<?php echo esc_attr( $ssb_s_from ); ?>">
+					<span>〜</span>
+					<input class="ssb-input" style="width:auto;" type="date" name="end_date" required
+						value="<?php echo esc_attr( $ssb_s_to ); ?>">
+				</span>
+				<p class="ssb-field__hint">最長 <?php echo esc_html( (string) SSB_MAX_SLOT_RANGE_DAYS ); ?> 日まで。</p>
+			</div>
+
+			<div class="ssb-field">
+				<span class="ssb-field__label">曜日<span class="ssb-field__required">必須</span></span>
+				<span style="display:inline-flex;gap:14px;flex-wrap:wrap;">
+					<?php foreach ( ssb_weekdays() as $ssb_num => $ssb_label ) : ?>
+						<label>
+							<input type="checkbox" name="weekdays[]" value="<?php echo esc_attr( (string) $ssb_num ); ?>"
+								<?php checked( in_array( $ssb_num, $ssb_s_days, true ) ); ?>>
+							<?php echo esc_html( $ssb_label ); ?>
+						</label>
+					<?php endforeach; ?>
+				</span>
+			</div>
+
+			<div class="ssb-field">
+				<label class="ssb-field__label" for="ssb-slot-start">時間帯<span class="ssb-field__required">必須</span></label>
+				<span style="display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;">
+					<input class="ssb-input" style="width:auto;" type="time" id="ssb-slot-start" name="start_time" required
+						value="<?php echo esc_attr( $ssb_s_start ); ?>">
+					<span>〜</span>
+					<input class="ssb-input" style="width:auto;" type="time" name="end_time" required
+						value="<?php echo esc_attr( $ssb_s_end ); ?>">
+				</span>
+				<p class="ssb-field__hint">終了時刻をはみ出すコマは作りません。過去の日時と、既にある枠は作成をスキップします。</p>
+			</div>
+
+			<p><button type="submit" class="ssb-button">この条件で枠を作る</button></p>
+		</form>
+
+	<?php endif; ?>
+
+	<?php
+	$ssb_slots = ssb_get_slots_by_instructor( $ssb_me->id, current_time( 'mysql' ) );
+	$ssb_counts = array_fill_keys( array_keys( ssb_slot_statuses() ), 0 );
+
+	foreach ( $ssb_slots as $ssb_slot ) {
+		if ( isset( $ssb_counts[ $ssb_slot->status ] ) ) {
+			$ssb_counts[ $ssb_slot->status ]++;
+		}
+	}
+	?>
+
+	<h2 class="ssb-section__title">これからの予約枠</h2>
+
+	<?php if ( ! $ssb_slots ) : ?>
+		<p class="ssb-muted">これからの予約枠はまだありません。</p>
+	<?php else : ?>
+
+		<p class="ssb-muted">
+			全 <?php echo esc_html( (string) count( $ssb_slots ) ); ?> 件
+			<?php foreach ( ssb_slot_statuses() as $ssb_key => $ssb_label ) : ?>
+				<?php if ( $ssb_counts[ $ssb_key ] > 0 ) : ?>
+					／ <?php echo esc_html( $ssb_label ); ?> <?php echo esc_html( (string) $ssb_counts[ $ssb_key ] ); ?>
+				<?php endif; ?>
+			<?php endforeach; ?>
+		</p>
+
+		<table class="ssb-table">
+			<thead>
+				<tr>
+					<th scope="col">日時</th>
+					<th scope="col">講座</th>
+					<th scope="col">状態</th>
+					<th scope="col">操作</th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $ssb_slots as $ssb_slot ) : ?>
+					<tr>
+						<td>
+							<?php echo esc_html( mysql2date( 'Y/n/j (D) H:i', $ssb_slot->start_at ) ); ?>
+							–
+							<?php echo esc_html( mysql2date( 'H:i', $ssb_slot->end_at ) ); ?>
+						</td>
+						<td><?php echo esc_html( $ssb_slot->course_title ); ?></td>
+						<td><?php echo esc_html( ssb_slot_status_label( $ssb_slot->status ) ); ?></td>
+						<td>
+							<?php if ( in_array( $ssb_slot->status, array( 'open', 'closed' ), true ) ) : ?>
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;">
+									<?php wp_nonce_field( 'ssb_delete_slot', 'ssb_slot_nonce' ); ?>
+									<input type="hidden" name="action" value="ssb_delete_slot">
+									<input type="hidden" name="slot_id" value="<?php echo esc_attr( (string) $ssb_slot->id ); ?>">
+									<button type="submit" class="ssb-button ssb-button--secondary">削除</button>
+								</form>
+							<?php else : ?>
+								<span class="ssb-muted">—</span>
+							<?php endif; ?>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
 
 	<?php endif; ?>
 
