@@ -459,6 +459,24 @@ get_header();
 	$ssb_counts    = array_fill_keys( array_keys( ssb_slot_statuses() ), 0 );
 	$ssb_deletable = 0;
 
+	// Googleカレンダーの予定と重なる枠は、受講者には表示されない。
+	$ssb_busy   = ssb_gcal_busy_for_instructor( $ssb_me );
+	$ssb_tz     = wp_timezone();
+	$ssb_hidden = array();
+
+	foreach ( $ssb_slots as $ssb_slot ) {
+		if ( ! $ssb_busy || 'open' !== $ssb_slot->status ) {
+			continue;
+		}
+
+		$ssb_from = ( new DateTimeImmutable( $ssb_slot->start_at, $ssb_tz ) )->getTimestamp();
+		$ssb_to   = ( new DateTimeImmutable( $ssb_slot->end_at, $ssb_tz ) )->getTimestamp();
+
+		if ( ssb_overlaps_busy( $ssb_from, $ssb_to, $ssb_busy ) ) {
+			$ssb_hidden[ (int) $ssb_slot->id ] = true;
+		}
+	}
+
 	foreach ( $ssb_slots as $ssb_slot ) {
 		if ( isset( $ssb_counts[ $ssb_slot->status ] ) ) {
 			$ssb_counts[ $ssb_slot->status ]++;
@@ -501,6 +519,9 @@ get_header();
 					／ <?php echo esc_html( $ssb_label ); ?> <?php echo esc_html( (string) $ssb_counts[ $ssb_key ] ); ?>
 				<?php endif; ?>
 			<?php endforeach; ?>
+			<?php if ( $ssb_hidden ) : ?>
+				<br>うち <?php echo esc_html( (string) count( $ssb_hidden ) ); ?> 件は Googleカレンダーの予定と重なるため、受講者には表示されていません。
+			<?php endif; ?>
 		</p>
 
 		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
@@ -552,7 +573,12 @@ get_header();
 								<?php echo esc_html( mysql2date( 'H:i', $ssb_slot->end_at ) ); ?>
 							</td>
 							<td><?php echo esc_html( $ssb_slot->course_title ); ?></td>
-							<td><?php echo esc_html( ssb_slot_status_label( $ssb_slot->status ) ); ?></td>
+							<td>
+								<?php echo esc_html( ssb_slot_status_label( $ssb_slot->status ) ); ?>
+								<?php if ( isset( $ssb_hidden[ (int) $ssb_slot->id ] ) ) : ?>
+									<br><span class="ssb-muted" style="font-size:0.8rem;">カレンダー予定あり（非表示）</span>
+								<?php endif; ?>
+							</td>
 						</tr>
 					<?php endforeach; ?>
 				</tbody>
