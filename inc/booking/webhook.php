@@ -207,7 +207,8 @@ function ssb_complete_booking_from_session( $session ) {
 		);
 	}
 
-	// 各種メール送信は実装順序 10 でここに追加する。
+	// 確定後の内容でメールを送る（paid_at と payment_intent を含めるため読み直す）。
+	ssb_mail_booking_confirmed( ssb_get_booking_context( (int) $booking->id ) );
 
 	return true;
 }

@@ -130,3 +130,174 @@ function ssb_mail_instructor_rejected( $instructor ) {
 
 	return wp_mail( $instructor->email, $subject, $body );
 }
+
+/* -------------------------------------------------------------------------
+ * 予約確定
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 予約内容を本文用の行にする.
+ *
+ * @param object $context ssb_get_booking_context() の戻り値。
+ * @return string[]
+ */
+function ssb_booking_mail_lines( $context ) {
+	$lines = array(
+		'講座　　　：' . $context->course_title,
+		'日時　　　：' . mysql2date( 'Y年n月j日(D) H:i', $context->start_at )
+			. '〜' . mysql2date( 'H:i', $context->end_at ),
+		'講師　　　：' . $context->instructor_name,
+		'お名前　　：' . $context->name,
+		'メール　　：' . $context->email,
+		'金額　　　：' . number_format( (int) $context->amount ) . ' 円（税込）',
+	);
+
+	if ( '' !== (string) $context->note ) {
+		$lines[] = '';
+		$lines[] = '--- 相談内容 ---';
+		$lines[] = (string) $context->note;
+	}
+
+	return $lines;
+}
+
+/**
+ * 受講者宛て：予約内容の確認.
+ *
+ * @param object|null $context 予約の詳細。
+ * @return bool
+ */
+function ssb_mail_booking_customer( $context ) {
+	if ( ! $context ) {
+		return false;
+	}
+
+	$subject = sprintf( '[%s] ご予約が確定しました', ssb_site_name() );
+
+	$body = implode(
+		"\n",
+		array_merge(
+			array(
+				$context->name . ' 様',
+				'',
+				'お申し込みありがとうございます。ご予約が確定しました。',
+				'',
+			),
+			ssb_booking_mail_lines( $context ),
+			array(
+				'',
+				'当日のご案内は、講師からご連絡いたします。',
+				'ご不明な点がありましたら、本メールにご返信ください。',
+				'',
+				ssb_site_name(),
+			)
+		)
+	);
+
+	return wp_mail( $context->email, $subject, $body );
+}
+
+/**
+ * 講師宛て：予約通知（.ics 添付）.
+ *
+ * カレンダーに取り込めるよう、招待用の .ics を text/calendar で添付する。
+ *
+ * @param object|null $context 予約の詳細。
+ * @return bool
+ */
+function ssb_mail_booking_instructor( $context ) {
+	if ( ! $context ) {
+		return false;
+	}
+
+	$subject = sprintf( '[%s] 予約が入りました', ssb_site_name() );
+
+	$body = implode(
+		"\n",
+		array_merge(
+			array(
+				$context->instructor_name . ' 様',
+				'',
+				'講座に予約が入りました。',
+				'',
+			),
+			ssb_booking_mail_lines( $context ),
+			array(
+				'',
+				'添付の invite.ics をお使いのカレンダーに取り込むと予定が登録できます。',
+				'',
+				'マイページ：',
+				ssb_get_page_url( 'mypage' ),
+				'',
+				ssb_site_name(),
+			)
+		)
+	);
+
+	ssb_pending_ics( ssb_build_invite_ics( $context ) );
+	$sent = wp_mail( $context->instructor_email, $subject, $body );
+	ssb_pending_ics( '' );
+
+	return $sent;
+}
+
+/**
+ * 運営宛て：予約通知.
+ *
+ * @param object|null $context 予約の詳細。
+ * @return bool
+ */
+function ssb_mail_booking_admin( $context ) {
+	if ( ! $context ) {
+		return false;
+	}
+
+	$subject = sprintf( '[%s] 予約が確定しました（#%d）', ssb_site_name(), (int) $context->id );
+
+	$body = implode(
+		"\n",
+		array_merge(
+			array(
+				'予約が確定しました。',
+				'',
+				'予約ID　　：' . (int) $context->id,
+				'決済日時　：' . $context->paid_at,
+				'Stripe　　：' . $context->stripe_payment_intent,
+				'',
+			),
+			ssb_booking_mail_lines( $context ),
+			array(
+				'',
+				'講師への振込対象：' . $context->instructor_name . '（' . $context->instructor_email . '）',
+			)
+		)
+	);
+
+	return wp_mail( ssb_admin_email(), $subject, $body );
+}
+
+/**
+ * 予約確定時のメールをまとめて送る.
+ *
+ * 1通失敗しても残りは送る。結果はログに残す。
+ *
+ * @param object|null $context 予約の詳細。
+ * @return void
+ */
+function ssb_mail_booking_confirmed( $context ) {
+	if ( ! $context ) {
+		return;
+	}
+
+	$results = array(
+		'customer'   => ssb_mail_booking_customer( $context ),
+		'instructor' => ssb_mail_booking_instructor( $context ),
+		'admin'      => ssb_mail_booking_admin( $context ),
+	);
+
+	foreach ( $results as $to => $ok ) {
+		if ( ! $ok ) {
+			ssb_log( '予約確定メールの送信に失敗', array( 'booking_id' => $context->id, 'to' => $to ) );
+		}
+	}
+}
