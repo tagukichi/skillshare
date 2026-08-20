@@ -101,40 +101,6 @@ function ssb_get_slot( $id ) {
 }
 
 /**
- * 講座の枠を取得する.
- *
- * 読む前に必ず期限切れの仮押さえを解放する。
- *
- * @param int    $course_id 講座ID。
- * @param string $from      この日時以降のみ（Y-m-d H:i:s）。空なら全期間。
- * @return object[]
- */
-function ssb_get_slots_by_course( $course_id, $from = '' ) {
-	global $wpdb;
-
-	ssb_release_expired_holds();
-
-	$table = ssb_table( 'slots' );
-
-	if ( '' !== $from ) {
-		return $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT * FROM `{$table}` WHERE course_id = %d AND start_at >= %s ORDER BY start_at ASC",
-				(int) $course_id,
-				$from
-			)
-		);
-	}
-
-	return $wpdb->get_results(
-		$wpdb->prepare(
-			"SELECT * FROM `{$table}` WHERE course_id = %d ORDER BY start_at ASC",
-			(int) $course_id
-		)
-	);
-}
-
-/**
  * 講師が持つすべての講座の枠を取得する.
  *
  * @param int    $instructor_id 講師ID。

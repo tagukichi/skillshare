@@ -36,17 +36,15 @@ define( 'SSB_STRIPE_API', 'https://api.stripe.com/v1' );
 /**
  * ログを残す.
  *
- * Webhook で握りつぶさずに原因を追えるようにするための最小限の記録。
+ * SPEC 4.6 が Webhook でのログを必須としているため、WP_DEBUG の設定に関わらず残す。
+ * 記録するのは失敗時だけなので、通常運用でログが膨らむことはない。
+ * 秘密鍵や ICS URL は決して渡さないこと。
  *
  * @param string $message メッセージ。
  * @param mixed  $context 付随情報。
  * @return void
  */
 function ssb_log( $message, $context = null ) {
-	if ( ! defined( 'WP_DEBUG' ) || ! WP_DEBUG ) {
-		return;
-	}
-
 	$line = '[skillshare] ' . $message;
 
 	if ( null !== $context ) {
@@ -72,15 +70,6 @@ function ssb_stripe_secret() {
  */
 function ssb_stripe_webhook_secret() {
 	return defined( 'SSB_STRIPE_WEBHOOK_SECRET' ) ? (string) SSB_STRIPE_WEBHOOK_SECRET : '';
-}
-
-/**
- * 決済が使える状態かどうかを返す.
- *
- * @return bool
- */
-function ssb_stripe_ready() {
-	return '' !== ssb_stripe_secret();
 }
 
 /* -------------------------------------------------------------------------
