@@ -690,3 +690,22 @@ function ssb_handle_delete_course() {
 	ssb_mypage_done( 'course_deleted', $back );
 }
 add_action( 'admin_post_ssb_delete_course', 'ssb_handle_delete_course' );
+
+/**
+ * すべての講座を返す（管理画面の絞り込み用）.
+ *
+ * @return object[] 講師名を含む。
+ */
+function ssb_get_all_courses() {
+	global $wpdb;
+
+	$courses     = ssb_table( 'courses' );
+	$instructors = ssb_table( 'instructors' );
+
+	return $wpdb->get_results(
+		"SELECT c.*, i.display_name AS instructor_name
+		FROM `{$courses}` c
+		INNER JOIN `{$instructors}` i ON i.id = c.instructor_id
+		ORDER BY i.display_name ASC, c.title ASC"
+	);
+}
