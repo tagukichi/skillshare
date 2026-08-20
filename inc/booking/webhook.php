@@ -192,6 +192,13 @@ function ssb_complete_booking_from_session( $session ) {
 
 	ssb_mark_booking_paid( (int) $booking->id, $intent );
 
+	$slot = ssb_get_slot( (int) $booking->slot_id );
+
+	if ( $slot && 'open' === $slot->status ) {
+		// 仮押さえが外れていても、誰も取っていなければそのまま確定させる。
+		ssb_log( '仮押さえが解放された状態で決済が完了した', array( 'booking_id' => $booking->id, 'slot_id' => $booking->slot_id ) );
+	}
+
 	if ( ! ssb_mark_slot_booked( (int) $booking->slot_id, $token ) ) {
 		// 仮押さえが切れて他の人に取られたなど。決済は成立しているので運営の対応が要る。
 		ssb_log(

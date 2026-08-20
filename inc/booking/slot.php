@@ -929,7 +929,11 @@ function ssb_extend_hold( $slot_id, $token, $minutes ) {
 /**
  * 枠を予約済みにする.
  *
- * トークンが一致する仮押さえだけを確定させる。Webhook から呼ぶ。
+ * Webhook から呼ぶ。確定できるのは次のどちらか。
+ * - 自分のトークンで仮押さえ中の枠
+ * - 誰も押さえていない空き枠（仮押さえが解放されたあとに決済が完了した場合）
+ *
+ * 他人が仮押さえ中の枠と、すでに予約済みの枠は横取りしない。
  *
  * @param int    $slot_id 枠ID。
  * @param string $token   仮押さえトークン。
@@ -943,8 +947,9 @@ function ssb_mark_slot_booked( $slot_id, $token ) {
 	$updated = $wpdb->query(
 		$wpdb->prepare(
 			"UPDATE `{$slots}`
-			SET status = 'booked', hold_expires_at = NULL
-			WHERE id = %d AND status = 'held' AND hold_token = %s",
+			SET status = 'booked', hold_token = NULL, hold_expires_at = NULL
+			WHERE id = %d
+				AND ( status = 'open' OR ( status = 'held' AND hold_token = %s ) )",
 			(int) $slot_id,
 			(string) $token
 		)

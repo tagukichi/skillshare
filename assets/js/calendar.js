@@ -35,6 +35,7 @@
 	var deadline = 0;
 	var ticker = null;
 	var busy = false;
+	var submitting = false;
 
 	/* ---------------------------------------------------------------- 汎用 */
 
@@ -501,9 +502,18 @@
 		});
 	}
 
+	// 決済へ進むための送信では解放してはいけない。掴んだまま Stripe へ渡す。
+	var bookingForm = booking ? booking.querySelector('form') : null;
+
+	if (bookingForm) {
+		bookingForm.addEventListener('submit', function () {
+			submitting = true;
+		});
+	}
+
 	// タブを閉じたときに掴んだままにしない。届かなくても期限切れで解放される。
 	window.addEventListener('pagehide', function () {
-		if (!hold || !navigator.sendBeacon) {
+		if (submitting || !hold || !navigator.sendBeacon) {
 			return;
 		}
 
