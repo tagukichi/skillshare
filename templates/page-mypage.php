@@ -22,6 +22,7 @@ $ssb_tabs = array(
 	'profile' => 'プロフィール',
 	'courses' => '講座管理',
 	'slots'   => '予約枠',
+	'gcal'    => 'Googleカレンダー',
 );
 
 $ssb_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'profile';
@@ -42,6 +43,7 @@ $ssb_skipped = isset( $_GET['skipped'] ) ? absint( wp_unslash( $_GET['skipped'] 
 // 一括削除の結果（件数）。skipped は生成・削除で共通のキーを使う。
 $ssb_deleted     = isset( $_GET['deleted'] ) ? absint( wp_unslash( $_GET['deleted'] ) ) : 0;
 $ssb_skipped_del = $ssb_skipped;
+$ssb_events      = isset( $_GET['events'] ) ? absint( wp_unslash( $_GET['events'] ) ) : 0;
 
 $ssb_notices = array(
 	'profile_saved'      => array( 'success', 'プロフィールを保存しました。' ),
@@ -56,6 +58,8 @@ $ssb_notices = array(
 	'ssb_course_not_found'        => array( 'error', '対象の講座が見つかりません。' ),
 	'ssb_course_delete_failed'    => array( 'error', '講座の削除に失敗しました。' ),
 	'slots_none_selected' => array( 'error', '削除する枠が選択されていません。' ),
+	'gcal_cleared'        => array( 'success', 'Googleカレンダーの連携を解除しました。' ),
+	'gcal_missing'        => array( 'error', 'Googleカレンダーが連携されていません。' ),
 	'error'              => array( 'error', '処理できませんでした。' ),
 );
 
@@ -91,6 +95,15 @@ get_header();
 			<?php if ( $ssb_skipped > 0 ) : ?>
 				<span class="ssb-muted">（過去の日時、または同じ枠が既にあるため <?php echo esc_html( (string) $ssb_skipped ); ?> 件は作成していません）</span>
 			<?php endif; ?>
+		</p>
+	</div>
+<?php endif; ?>
+
+<?php if ( 'gcal_saved' === $ssb_msg ) : ?>
+	<div class="ssb-notice ssb-notice--success">
+		<p>
+			Googleカレンダーを読み込みました。
+			<span class="ssb-muted">（今後 <?php echo esc_html( (string) SSB_GCAL_WINDOW_DAYS ); ?> 日分で <?php echo esc_html( (string) $ssb_events ); ?> 件の予定を取得）</span>
 		</p>
 	</div>
 <?php endif; ?>
@@ -565,6 +578,83 @@ get_header();
 		} )();
 		</script>
 
+	<?php endif; ?>
+
+<?php endif; ?>
+
+<?php if ( 'gcal' === $ssb_tab ) : ?>
+
+	<?php
+	$ssb_connected = '' !== (string) $ssb_me->gcal_ics_url;
+	$ssb_cached    = ssb_gcal_cached_count( $ssb_me );
+	?>
+
+	<h2 class="ssb-section__title">Googleカレンダー連携</h2>
+
+	<p class="ssb-muted">
+		カレンダーに予定が入っている時間帯を、予約枠から自動で除外します。
+		<strong>除外だけを行う機能です。</strong>カレンダーが空いていても、予約枠を登録していなければ何も表示されません。
+	</p>
+
+	<div class="ssb-card">
+		<h3 class="ssb-card__title">
+			状態：<?php echo $ssb_connected ? '連携中' : '未連携'; ?>
+		</h3>
+
+		<?php if ( $ssb_connected ) : ?>
+			<p class="ssb-muted" style="margin:0;">
+				最終取得：<?php echo esc_html( $ssb_me->gcal_fetched_at ? mysql2date( 'Y年n月j日(D) H:i', $ssb_me->gcal_fetched_at ) : '未取得' ); ?>
+				／ 取得済みの予定：<?php echo esc_html( (string) $ssb_cached ); ?> 件
+			</p>
+			<p class="ssb-muted" style="margin:8px 0 0;font-size:0.85rem;">
+				カレンダーは1時間ごとに自動で読み直します。すぐ反映したいときは「今すぐ取り直す」を押してください。
+				なお、登録した URL は安全のため画面には表示しません。
+			</p>
+		<?php else : ?>
+			<p style="margin:0;">まだ連携していません。下のフォームから URL を登録してください。</p>
+		<?php endif; ?>
+	</div>
+
+	<h3 class="ssb-section__title" style="margin-top:32px;">URL の登録</h3>
+
+	<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+		<?php wp_nonce_field( 'ssb_save_gcal', 'ssb_gcal_nonce' ); ?>
+		<input type="hidden" name="action" value="ssb_save_gcal">
+
+		<div class="ssb-field">
+			<label class="ssb-field__label" for="ssb-gcal-url">
+				非公開URL（iCal形式）<span class="ssb-field__required">必須</span>
+			</label>
+			<input class="ssb-input" type="url" id="ssb-gcal-url" name="gcal_url"
+				placeholder="https://calendar.google.com/calendar/ical/.../basic.ics" required>
+			<p class="ssb-field__hint">
+				Googleカレンダーの<strong>設定 → マイカレンダーの設定 → 対象のカレンダー → カレンダーの統合</strong>にある
+				「非公開URL（iCal形式）」をそのまま貼り付けてください。
+				<?php echo $ssb_connected ? '登録し直すと、いまの設定を置き換えます。' : ''; ?>
+			</p>
+			<p class="ssb-field__hint">
+				この URL を知っている人は予定を閲覧できます。他の方には共有しないでください。
+			</p>
+		</div>
+
+		<p><button type="submit" class="ssb-button">保存して読み込む</button></p>
+	</form>
+
+	<?php if ( $ssb_connected ) : ?>
+		<div class="ssb-slotactions">
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;">
+				<?php wp_nonce_field( 'ssb_refresh_gcal', 'ssb_gcal_refresh_nonce' ); ?>
+				<input type="hidden" name="action" value="ssb_refresh_gcal">
+				<button type="submit" class="ssb-button ssb-button--secondary">今すぐ取り直す</button>
+			</form>
+
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline;">
+				<?php wp_nonce_field( 'ssb_clear_gcal', 'ssb_gcal_clear_nonce' ); ?>
+				<input type="hidden" name="action" value="ssb_clear_gcal">
+				<button type="submit" class="ssb-button ssb-button--secondary"
+					onclick="return confirm('連携を解除します。予約枠の除外は行われなくなります。\nよろしいですか？');">連携を解除する</button>
+			</form>
+		</div>
 	<?php endif; ?>
 
 <?php endif; ?>

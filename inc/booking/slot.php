@@ -452,10 +452,13 @@ add_action( 'admin_post_ssb_generate_slots', 'ssb_handle_generate_slots' );
 /**
  * 予約可能な枠を返す.
  *
- * SPEC 4.3 の引き算のうち、この段階では次まで。
- *   講師が登録した枠（open） － 仮押さえ中で期限内のもの
+ * SPEC 4.3 の引き算をここで行う。
+ *   講師が登録した枠（open）
+ *   － 仮押さえ中で期限内のもの
+ *   － Googleカレンダーに予定がある時間帯（連携している場合のみ）
+ *
  * ssb_release_expired_holds() を先に呼ぶので、期限切れの held は open に戻ってから
- * 抽出される。Googleカレンダーによる除外は実装順序 11 で加わる。
+ * 抽出される。カレンダー未連携や取得失敗のときは除外なしで返す。
  *
  * @param int $course_id 講座ID。
  * @return object[]
@@ -467,13 +470,33 @@ function ssb_get_available_slots( $course_id ) {
 
 	$table = ssb_table( 'slots' );
 
-	return $wpdb->get_results(
+	$slots = $wpdb->get_results(
 		$wpdb->prepare(
 			"SELECT id, start_at, end_at FROM `{$table}`
 			WHERE course_id = %d AND status = 'open' AND start_at > %s
 			ORDER BY start_at ASC",
 			(int) $course_id,
 			current_time( 'mysql' )
+		)
+	);
+
+	$busy = ssb_gcal_busy_for_course( $course_id );
+
+	if ( ! $busy ) {
+		return $slots;
+	}
+
+	$tz = wp_timezone();
+
+	return array_values(
+		array_filter(
+			$slots,
+			static function ( $slot ) use ( $busy, $tz ) {
+				$start = ( new DateTimeImmutable( $slot->start_at, $tz ) )->getTimestamp();
+				$end   = ( new DateTimeImmutable( $slot->end_at, $tz ) )->getTimestamp();
+
+				return ! ssb_overlaps_busy( $start, $end, $busy );
+			}
 		)
 	);
 }
