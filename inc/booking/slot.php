@@ -946,3 +946,26 @@ function ssb_mark_slot_booked( $slot_id, $token ) {
 
 	return (bool) $updated;
 }
+
+/**
+ * 予約済みの枠を空きに戻す.
+ *
+ * キャンセル時に使う。予約済み以外の枠には触れない。
+ *
+ * @param int $slot_id 枠ID。
+ * @return bool
+ */
+function ssb_reopen_slot( $slot_id ) {
+	global $wpdb;
+
+	$slots = ssb_table( 'slots' );
+
+	return (bool) $wpdb->query(
+		$wpdb->prepare(
+			"UPDATE `{$slots}`
+			SET status = 'open', hold_token = NULL, hold_expires_at = NULL
+			WHERE id = %d AND status = 'booked'",
+			(int) $slot_id
+		)
+	);
+}

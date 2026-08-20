@@ -12,6 +12,8 @@ defined( 'ABSPATH' ) || exit;
 if ( empty( $ssb_list ) ) {
 	return;
 }
+
+$ssb_now = current_time( 'mysql' );
 ?>
 <table class="ssb-table">
 	<thead>
@@ -21,6 +23,7 @@ if ( empty( $ssb_list ) ) {
 			<th scope="col">受講者</th>
 			<th scope="col">相談内容</th>
 			<th scope="col">金額</th>
+			<th scope="col">操作</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -44,6 +47,19 @@ if ( empty( $ssb_list ) ) {
 					<?php endif; ?>
 				</td>
 				<td class="ssb-price"><?php echo esc_html( number_format( (int) $ssb_row->amount ) ); ?> 円</td>
+				<td>
+					<?php if ( $ssb_row->start_at >= $ssb_now ) : ?>
+						<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+							<?php wp_nonce_field( 'ssb_cancel_booking_instructor', 'ssb_cancel_instructor_nonce' ); ?>
+							<input type="hidden" name="action" value="ssb_cancel_booking_instructor">
+							<input type="hidden" name="booking_id" value="<?php echo esc_attr( (string) $ssb_row->id ); ?>">
+							<button type="submit" class="ssb-button ssb-button--secondary"
+								onclick="return confirm('この予約をキャンセルし、受講料を全額返金します。\n受講者にも通知が届きます。\n\nよろしいですか？');">キャンセル</button>
+						</form>
+					<?php else : ?>
+						<span class="ssb-muted">—</span>
+					<?php endif; ?>
+				</td>
 			</tr>
 		<?php endforeach; ?>
 	</tbody>

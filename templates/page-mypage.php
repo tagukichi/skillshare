@@ -61,6 +61,8 @@ $ssb_notices = array(
 	'slots_none_selected' => array( 'error', '削除する枠が選択されていません。' ),
 	'gcal_cleared'        => array( 'success', 'Googleカレンダーの連携を解除しました。' ),
 	'gcal_missing'        => array( 'error', 'Googleカレンダーが連携されていません。' ),
+	'booking_cancelled'   => array( 'success', '予約をキャンセルし、全額を返金しました。' ),
+	'booking_forbidden'   => array( 'error', '対象の予約が見つかりません。' ),
 	'error'              => array( 'error', '処理できませんでした。' ),
 );
 

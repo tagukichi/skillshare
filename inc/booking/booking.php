@@ -94,15 +94,17 @@ function ssb_insert_booking( $data ) {
 	$ok = $wpdb->insert(
 		ssb_table( 'bookings' ),
 		array(
-			'slot_id'    => (int) $data['slot_id'],
-			'name'       => $data['name'],
-			'email'      => $data['email'],
-			'note'       => $data['note'],
-			'amount'     => (int) $data['amount'],
-			'status'     => 'pending',
-			'created_at' => current_time( 'mysql' ),
+			'slot_id'      => (int) $data['slot_id'],
+			'name'         => $data['name'],
+			'email'        => $data['email'],
+			'note'         => $data['note'],
+			'amount'       => (int) $data['amount'],
+			'status'       => 'pending',
+			// 受講者がメールのリンクからキャンセルするための鍵。推測できない値にする。
+			'cancel_token' => wp_generate_uuid4(),
+			'created_at'   => current_time( 'mysql' ),
 		),
-		array( '%d', '%s', '%s', '%s', '%d', '%s', '%s' )
+		array( '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
 	);
 
 	return $ok ? (int) $wpdb->insert_id : 0;
@@ -380,3 +382,250 @@ function ssb_booking_monthly_summary( $instructor_id = 0 ) {
 
 	return array_values( $grouped );
 }
+
+/* -------------------------------------------------------------------------
+ * キャンセルと返金
+ * ---------------------------------------------------------------------- */
+
+/**
+ * キャンセルの実行者を表す値の一覧.
+ *
+ * @return array<string,string>
+ */
+function ssb_cancelled_by_labels() {
+	return array(
+		'customer'   => '受講者',
+		'instructor' => '講師',
+		'admin'      => '運営',
+	);
+}
+
+/**
+ * キャンセル実行者の表示名を返す.
+ *
+ * @param string $by 実行者。
+ * @return string
+ */
+function ssb_cancelled_by_label( $by ) {
+	$labels = ssb_cancelled_by_labels();
+
+	return isset( $labels[ $by ] ) ? $labels[ $by ] : '—';
+}
+
+/**
+ * 受講者向けのキャンセル URL を返す.
+ *
+ * トークンを知っている人だけが開けるので、確認メール以外には載せないこと。
+ *
+ * @param object $booking 予約レコード。
+ * @return string
+ */
+function ssb_cancel_url( $booking ) {
+	return add_query_arg(
+		array(
+			'booking' => (string) (int) $booking->id,
+			'token'   => (string) $booking->cancel_token,
+		),
+		ssb_get_page_url( 'booking/cancel' )
+	);
+}
+
+/**
+ * ID とトークンの組で予約を取得する.
+ *
+ * トークンの比較は hash_equals() で行う。
+ *
+ * @param int    $booking_id 予約ID。
+ * @param string $token      キャンセル用トークン。
+ * @return object|null 一致しなければ null。
+ */
+function ssb_get_booking_by_cancel_token( $booking_id, $token ) {
+	$booking = ssb_get_booking( $booking_id );
+
+	if ( ! $booking || '' === (string) $booking->cancel_token || '' === (string) $token ) {
+		return null;
+	}
+
+	return hash_equals( (string) $booking->cancel_token, (string) $token ) ? $booking : null;
+}
+
+/**
+ * 受講者がまだキャンセルできるかを返す.
+ *
+ * 開始時刻を過ぎたものは受講者側からは締め切る。講師と運営は締め切り後も操作できる。
+ *
+ * @param object $booking 予約（start_at を含むこと）。
+ * @return bool
+ */
+function ssb_customer_can_cancel( $booking ) {
+	if ( 'paid' !== $booking->status ) {
+		return false;
+	}
+
+	return $booking->start_at > current_time( 'mysql' );
+}
+
+/**
+ * 予約をキャンセルして全額返金する.
+ *
+ * 返金を先に通し、成功したら記録する。DB を先に書くと、返金に失敗したときに
+ * 「キャンセル済みなのに返金されていない」状態が残ってしまうため。
+ *
+ * @param int    $booking_id 予約ID。
+ * @param string $by         customer / instructor / admin。
+ * @return true|WP_Error
+ */
+function ssb_cancel_booking_with_refund( $booking_id, $by ) {
+	global $wpdb;
+
+	$booking = ssb_get_booking( $booking_id );
+
+	if ( ! $booking ) {
+		return new WP_Error( 'ssb_cancel_not_found', '対象の予約が見つかりません。' );
+	}
+
+	if ( 'cancelled' === $booking->status ) {
+		return new WP_Error( 'ssb_cancel_already', 'この予約はすでにキャンセルされています。' );
+	}
+
+	if ( 'paid' !== $booking->status ) {
+		return new WP_Error( 'ssb_cancel_not_paid', '決済が完了していない予約はキャンセルできません。' );
+	}
+
+	if ( ! array_key_exists( $by, ssb_cancelled_by_labels() ) ) {
+		$by = 'admin';
+	}
+
+	$refund = ssb_stripe_refund( (string) $booking->stripe_payment_intent, (int) $booking->id );
+
+	if ( is_wp_error( $refund ) ) {
+		ssb_log(
+			'返金に失敗したためキャンセルを中止',
+			array(
+				'booking_id' => (int) $booking->id,
+				'code'       => $refund->get_error_code(),
+			)
+		);
+
+		return $refund;
+	}
+
+	$updated = $wpdb->update(
+		ssb_table( 'bookings' ),
+		array(
+			'status'           => 'cancelled',
+			'cancelled_at'     => current_time( 'mysql' ),
+			'cancelled_by'     => $by,
+			'stripe_refund_id' => isset( $refund['id'] ) ? (string) $refund['id'] : '',
+		),
+		array( 'id' => (int) $booking->id ),
+		array( '%s', '%s', '%s', '%s' ),
+		array( '%d' )
+	);
+
+	if ( false === $updated ) {
+		// 返金は成立しているので、記録できなかったことは必ず残す。
+		ssb_log(
+			'返金は成立したが予約の更新に失敗。手作業での確認が必要',
+			array(
+				'booking_id' => (int) $booking->id,
+				'refund_id'  => isset( $refund['id'] ) ? (string) $refund['id'] : '',
+			)
+		);
+	}
+
+	// 枠を空きに戻し、他の方が予約できるようにする。
+	ssb_reopen_slot( (int) $booking->slot_id );
+
+	ssb_mail_booking_cancelled( ssb_get_booking_context( (int) $booking->id ) );
+
+	return true;
+}
+
+/* -------------------------------------------------------------------------
+ * キャンセルの受け口
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 受講者からのキャンセル.
+ *
+ * 本人確認はメールに載せたトークンで行う。ログインは不要。
+ *
+ * @return void
+ */
+function ssb_handle_cancel_booking_customer() {
+	check_admin_referer( 'ssb_cancel_booking', 'ssb_cancel_nonce' );
+
+	$id    = isset( $_POST['booking'] ) ? absint( wp_unslash( $_POST['booking'] ) ) : 0;
+	$token = isset( $_POST['token'] ) ? sanitize_text_field( wp_unslash( $_POST['token'] ) ) : '';
+
+	$page = ssb_get_page_url( 'booking/cancel' );
+	$back = add_query_arg(
+		array(
+			'booking' => (string) $id,
+			'token'   => $token,
+		),
+		$page
+	);
+
+	$booking = ssb_get_booking_by_cancel_token( $id, $token );
+
+	if ( ! $booking ) {
+		ssb_flash_redirect( $page, array( 'errors' => array( 'ご予約を確認できませんでした。メールのリンクをもう一度お試しください。' ) ) );
+	}
+
+	$context = ssb_get_booking_context( $id );
+
+	if ( ! $context || ! ssb_customer_can_cancel( $context ) ) {
+		ssb_flash_redirect(
+			$back,
+			array( 'errors' => array( '開始時刻を過ぎているため、この画面からはキャンセルできません。お手数ですが運営までご連絡ください。' ) )
+		);
+	}
+
+	$result = ssb_cancel_booking_with_refund( $id, 'customer' );
+
+	if ( is_wp_error( $result ) ) {
+		ssb_flash_redirect( $back, array( 'errors' => array( $result->get_error_message() ) ) );
+	}
+
+	wp_safe_redirect( add_query_arg( 'cancelled', '1', $back ) );
+	exit;
+}
+add_action( 'admin_post_nopriv_ssb_cancel_booking', 'ssb_handle_cancel_booking_customer' );
+add_action( 'admin_post_ssb_cancel_booking', 'ssb_handle_cancel_booking_customer' );
+
+/**
+ * 講師からのキャンセル.
+ *
+ * 自分の講座の予約かどうかを必ず確認する。
+ *
+ * @return void
+ */
+function ssb_handle_cancel_booking_instructor() {
+	check_admin_referer( 'ssb_cancel_booking_instructor', 'ssb_cancel_instructor_nonce' );
+
+	$instructor = ssb_current_instructor();
+
+	if ( ! $instructor ) {
+		wp_safe_redirect( home_url( '/' ) );
+		exit;
+	}
+
+	$back    = array( 'tab' => 'bookings' );
+	$id      = isset( $_POST['booking_id'] ) ? absint( wp_unslash( $_POST['booking_id'] ) ) : 0;
+	$context = $id ? ssb_get_booking_context( $id ) : null;
+
+	if ( ! $context || (int) $context->instructor_id !== (int) $instructor->id ) {
+		ssb_mypage_done( 'booking_forbidden', $back );
+	}
+
+	$result = ssb_cancel_booking_with_refund( $id, 'instructor' );
+
+	if ( is_wp_error( $result ) ) {
+		ssb_mypage_fail( array( $result->get_error_message() ), array(), $back );
+	}
+
+	ssb_mypage_done( 'booking_cancelled', $back );
+}
+add_action( 'admin_post_ssb_cancel_booking_instructor', 'ssb_handle_cancel_booking_instructor' );

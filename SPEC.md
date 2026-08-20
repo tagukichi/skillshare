@@ -164,8 +164,12 @@ vendor/
 | status | VARCHAR(20) | `pending` / `paid` / `cancelled` |
 | stripe_session_id | VARCHAR(255) | |
 | stripe_payment_intent | VARCHAR(255) | |
+| stripe_refund_id | VARCHAR(255) | 返金ID |
+| cancel_token | VARCHAR(64) | 受講者がキャンセルするための鍵 |
+| cancelled_by | VARCHAR(20) | `customer` / `instructor` / `admin` |
 | created_at | DATETIME | |
 | paid_at | DATETIME | |
+| cancelled_at | DATETIME | |
 
 `stripe_session_id` にユニークインデックスを張ること（Webhook の重複処理防止）。
 
@@ -316,7 +320,35 @@ define('SSB_STRIPE_WEBHOOK_SECRET', 'whsec_xxx');
 Composer が使えない環境も想定し、`wp_remote_post()` による直接呼び出しでも可。
 ただし Webhook の署名検証だけは自前実装せず、公式ライブラリの利用を推奨する。
 
-### 4.7 メール送信
+### 4.7 キャンセルと返金
+
+確定済みの予約をキャンセルすると、**Stripe へ自動で全額返金**する。
+
+**キャンセルできる人**
+
+| 誰が | どこから | 制限 |
+|---|---|---|
+| 受講者 | 予約確認メールのリンク（`/booking/cancel`） | 開始時刻を過ぎたら不可 |
+| 講師 | マイページ「予約一覧」 | これからの予約のみ |
+| 運営 | 管理画面「予約一覧」 | 制限なし |
+
+受講者の本人確認は、予約ごとに発行するトークン（`cancel_token`）で行う。ログインは不要。
+トークンは確認メール以外に出力せず、比較は `hash_equals()` で行う。
+
+**処理の順序**
+
+1. Stripe へ全額返金する（`amount` を渡さなければ全額になる）
+2. 成功したら `bookings.status = cancelled`、`cancelled_at`、`cancelled_by`、`stripe_refund_id` を記録
+3. 枠を `open` に戻し、他の人が予約できるようにする
+4. 受講者・講師・運営へ通知メールを送る。講師宛てには `METHOD:CANCEL` の `.ics` を添付し、
+   カレンダーの予定を取り消せるようにする
+
+**返金を先に通すこと。** DB を先に書くと、返金に失敗したときに「キャンセル済みなのに
+返金されていない」状態が残る。返金は成立したのに DB の更新に失敗した場合は必ずログを残す。
+
+返金リクエストには予約IDから作る冪等キーを付け、再送しても二重に返金されないようにする。
+
+### 4.8 メール送信
 
 `wp_mail()` を使用。以下を送信する。
 
@@ -327,8 +359,11 @@ Composer が使えない環境も想定し、`wp_remote_post()` による直接�
 | 予約確定時 | 受講者 | 予約内容の確認 |
 | 予約確定時 | 講師 | 予約通知（`.ics` 添付） |
 | 予約確定時 | 運営 | 予約通知 |
+| キャンセル時 | 受講者 | キャンセルと返金のお知らせ |
+| キャンセル時 | 講師 | キャンセル通知（取り消し用 `.ics` 添付） |
+| キャンセル時 | 運営 | キャンセルと返金の通知 |
 
-### 4.8 管理画面
+### 4.9 管理画面
 
 - **講師申請**：一覧・承認・却下
 - **予約一覧**：予約の一覧、講座・講師・金額・ステータスで絞り込み、CSVエクスポート
@@ -347,6 +382,7 @@ Composer が使えない環境も想定し、`wp_remote_post()` による直接�
 | `/login` | ログイン・パスワード再設定 | 全員 |
 | `/mypage` | 講師マイページ | 承認済み講師 |
 | `/booking/done` | 予約完了 | 全員 |
+| `/booking/cancel` | 予約のキャンセル | 予約確認メールのリンクから |
 | `/terms` | 利用規約 | 全員 |
 | `/tokushoho` | 特定商取引法に基づく表記 | 全員 |
 | `/cancel-policy` | キャンセルポリシー | 全員 |

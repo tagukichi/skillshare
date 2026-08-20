@@ -79,26 +79,33 @@ function ssb_stripe_webhook_secret() {
 /**
  * Stripe API を呼ぶ.
  *
- * @param string              $path   /checkout/sessions のようなパス。
- * @param array<string,mixed> $params フォームパラメータ（入れ子可）。
+ * @param string              $path            /checkout/sessions のようなパス。
+ * @param array<string,mixed> $params          フォームパラメータ（入れ子可）。
+ * @param string              $idempotency_key 冪等キー。再送しても二重に処理されない。
  * @return array<string,mixed>|WP_Error デコードしたレスポンス。
  */
-function ssb_stripe_post( $path, $params ) {
+function ssb_stripe_post( $path, $params, $idempotency_key = '' ) {
 	$secret = ssb_stripe_secret();
 
 	if ( '' === $secret ) {
 		return new WP_Error( 'ssb_stripe_unconfigured', '決済の設定が完了していません。運営までお問い合わせください。' );
 	}
 
+	$headers = array(
+		'Authorization'  => 'Bearer ' . $secret,
+		'Content-Type'   => 'application/x-www-form-urlencoded',
+		'Stripe-Version' => '2024-06-20',
+	);
+
+	if ( '' !== $idempotency_key ) {
+		$headers['Idempotency-Key'] = $idempotency_key;
+	}
+
 	$response = wp_remote_post(
 		SSB_STRIPE_API . $path,
 		array(
 			'timeout' => 30,
-			'headers' => array(
-				'Authorization'  => 'Bearer ' . $secret,
-				'Content-Type'   => 'application/x-www-form-urlencoded',
-				'Stripe-Version' => '2024-06-20',
-			),
+			'headers' => $headers,
 			// 入れ子の配列は a[b][c]=v 形式に展開される。Stripe はこの形を受け付ける。
 			'body'    => http_build_query( $params, '', '&' ),
 		)
@@ -273,3 +280,32 @@ function ssb_handle_start_checkout() {
 }
 add_action( 'admin_post_ssb_start_checkout', 'ssb_handle_start_checkout' );
 add_action( 'admin_post_nopriv_ssb_start_checkout', 'ssb_handle_start_checkout' );
+
+/* -------------------------------------------------------------------------
+ * 返金
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 全額返金する.
+ *
+ * amount を渡さないと Stripe は全額返金する。
+ * 冪等キーを付けるので、同じ予約に対して再送しても二重に返金されない。
+ *
+ * @param string $payment_intent PaymentIntent ID。
+ * @param int    $booking_id     予約ID（冪等キーに使う）。
+ * @return array<string,mixed>|WP_Error 返金オブジェクト。
+ */
+function ssb_stripe_refund( $payment_intent, $booking_id ) {
+	if ( '' === (string) $payment_intent ) {
+		return new WP_Error( 'ssb_refund_no_intent', '決済の記録が見つからないため、自動での返金ができません。' );
+	}
+
+	return ssb_stripe_post(
+		'/refunds',
+		array(
+			'payment_intent' => $payment_intent,
+			'metadata'       => array( 'booking_id' => (string) $booking_id ),
+		),
+		'ssb-refund-' . (int) $booking_id
+	);
+}

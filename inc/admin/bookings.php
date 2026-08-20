@@ -168,6 +168,29 @@ function ssb_admin_bookings_page() {
 	<div class="wrap">
 		<h1>予約一覧</h1>
 
+		<?php
+		$notices = array(
+			'cancelled'               => array( 'success', 'キャンセルし、全額を返金しました。' ),
+			'ssb_cancel_already'      => array( 'error', 'この予約はすでにキャンセルされています。' ),
+			'ssb_cancel_not_paid'     => array( 'error', '決済が完了していない予約はキャンセルできません。' ),
+			'ssb_cancel_not_found'    => array( 'error', '対象の予約が見つかりません。' ),
+			'ssb_refund_no_intent'    => array( 'error', '決済の記録が無いため自動での返金ができません。Stripe の画面をご確認ください。' ),
+			'ssb_stripe_error'        => array( 'error', 'Stripe が返金を受け付けませんでした。Stripe の画面をご確認ください。' ),
+			'ssb_stripe_unreachable'  => array( 'error', 'Stripe に接続できませんでした。時間をおいて再度お試しください。' ),
+			'ssb_stripe_unconfigured' => array( 'error', 'Stripe の設定が完了していません。' ),
+		);
+
+		$message = isset( $_GET['ssb_msg'] ) ? sanitize_key( wp_unslash( $_GET['ssb_msg'] ) ) : '';
+
+		if ( isset( $notices[ $message ] ) ) {
+			printf(
+				'<div class="notice notice-%s is-dismissible"><p>%s</p></div>',
+				esc_attr( $notices[ $message ][0] ),
+				esc_html( $notices[ $message ][1] )
+			);
+		}
+		?>
+
 		<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" style="margin:16px 0;">
 			<input type="hidden" name="page" value="<?php echo esc_attr( SSB_ADMIN_BOOKINGS_SLUG ); ?>">
 
@@ -225,13 +248,14 @@ function ssb_admin_bookings_page() {
 					<th scope="col" style="width:12%;">講師</th>
 					<th scope="col" style="width:16%;">受講者</th>
 					<th scope="col" style="width:14%;">受講日時</th>
-					<th scope="col" style="width:10%;">金額</th>
-					<th scope="col" style="width:12%;">状態</th>
+					<th scope="col" style="width:9%;">金額</th>
+					<th scope="col" style="width:11%;">状態</th>
+					<th scope="col" style="width:10%;">操作</th>
 				</tr>
 			</thead>
 			<tbody>
 			<?php if ( ! $rows ) : ?>
-				<tr><td colspan="8">該当する予約はありません。</td></tr>
+				<tr><td colspan="9">該当する予約はありません.</td></tr>
 			<?php endif; ?>
 
 			<?php foreach ( $rows as $row ) : ?>
@@ -250,6 +274,22 @@ function ssb_admin_bookings_page() {
 						<?php echo esc_html( ssb_booking_status_label( $row->status ) ); ?>
 						<?php if ( $row->paid_at ) : ?>
 							<br><span class="description"><?php echo esc_html( ssb_format_datetime( $row->paid_at ) ); ?></span>
+						<?php endif; ?>
+						<?php if ( 'cancelled' === $row->status && $row->cancelled_by ) : ?>
+							<br><span class="description"><?php echo esc_html( ssb_cancelled_by_label( $row->cancelled_by ) ); ?>による</span>
+						<?php endif; ?>
+					</td>
+					<td>
+						<?php if ( 'paid' === $row->status ) : ?>
+							<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+								<?php wp_nonce_field( 'ssb_cancel_booking_admin' ); ?>
+								<input type="hidden" name="action" value="ssb_cancel_booking_admin">
+								<input type="hidden" name="booking_id" value="<?php echo esc_attr( (string) $row->id ); ?>">
+								<button type="submit" class="button button-link-delete"
+									onclick="return confirm('予約 #<?php echo esc_js( (string) $row->id ); ?> をキャンセルし、<?php echo esc_js( number_format( (int) $row->amount ) ); ?> 円を全額返金します。\n受講者と講師にも通知が届きます。\n\nよろしいですか？');">キャンセル</button>
+							</form>
+						<?php else : ?>
+							<span class="description">—</span>
 						<?php endif; ?>
 					</td>
 				</tr>
@@ -427,3 +467,25 @@ function ssb_handle_export_courses() {
 	);
 }
 add_action( 'admin_post_ssb_export_courses', 'ssb_handle_export_courses' );
+
+/**
+ * 運営からのキャンセル.
+ *
+ * @return void
+ */
+function ssb_handle_cancel_booking_admin() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html( '権限がありません。' ), 403 );
+	}
+
+	check_admin_referer( 'ssb_cancel_booking_admin' );
+
+	$id     = isset( $_POST['booking_id'] ) ? absint( wp_unslash( $_POST['booking_id'] ) ) : 0;
+	$result = $id ? ssb_cancel_booking_with_refund( $id, 'admin' ) : new WP_Error( 'ssb_cancel_not_found', '対象の予約が見つかりません。' );
+
+	$message = is_wp_error( $result ) ? $result->get_error_code() : 'cancelled';
+
+	wp_safe_redirect( ssb_admin_bookings_url( array( 'ssb_msg' => $message ) ) );
+	exit;
+}
+add_action( 'admin_post_ssb_cancel_booking_admin', 'ssb_handle_cancel_booking_admin' );

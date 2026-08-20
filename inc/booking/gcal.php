@@ -84,9 +84,11 @@ function ssb_ics_utc( $datetime ) {
  * 予約から招待用の ICS を組み立てる.
  *
  * @param object $context ssb_get_booking_context() の戻り値。
+ * @param string $method  REQUEST（招待）または CANCEL（取り消し）。
  * @return string ICS 本文。
  */
-function ssb_build_invite_ics( $context ) {
+function ssb_build_invite_ics( $context, $method = 'REQUEST' ) {
+	$cancelling = ( 'CANCEL' === $method );
 	$host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
 
 	$summary = sprintf( '%s（%s 様）', $context->course_title, $context->name );
@@ -107,7 +109,7 @@ function ssb_build_invite_ics( $context ) {
 		'VERSION:2.0',
 		'PRODID:-//Skillshare//Booking//JA',
 		'CALSCALE:GREGORIAN',
-		'METHOD:REQUEST',
+		'METHOD:' . $method,
 		'BEGIN:VEVENT',
 		'UID:ssb-booking-' . (int) $context->id . '@' . $host,
 		'DTSTAMP:' . gmdate( 'Ymd\THis\Z' ),
@@ -118,8 +120,9 @@ function ssb_build_invite_ics( $context ) {
 		'ORGANIZER;CN=' . ssb_ics_escape( ssb_site_name() ) . ':mailto:' . ssb_admin_email(),
 		'ATTENDEE;CN=' . ssb_ics_escape( (string) $context->instructor_name )
 			. ';ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:' . $context->instructor_email,
-		'STATUS:CONFIRMED',
-		'SEQUENCE:0',
+		'STATUS:' . ( $cancelling ? 'CANCELLED' : 'CONFIRMED' ),
+		// 取り消しは元の招待より大きい SEQUENCE でないとカレンダーが無視する。
+		'SEQUENCE:' . ( $cancelling ? '1' : '0' ),
 		'END:VEVENT',
 		'END:VCALENDAR',
 	);
@@ -163,7 +166,9 @@ function ssb_attach_pending_ics( $phpmailer ) {
 		return;
 	}
 
-	$phpmailer->addStringAttachment( $ics, 'invite.ics', 'base64', 'text/calendar; method=REQUEST; charset=UTF-8' );
+	$method = str_contains( $ics, 'METHOD:CANCEL' ) ? 'CANCEL' : 'REQUEST';
+
+	$phpmailer->addStringAttachment( $ics, 'invite.ics', 'base64', 'text/calendar; method=' . $method . '; charset=UTF-8' );
 }
 add_action( 'phpmailer_init', 'ssb_attach_pending_ics' );
 

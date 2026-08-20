@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
  * インストール処理のバージョン。スキーマや管理対象の固定ページを変更したら必ず上げる。
  * 上げると次に wp-admin を開いた時点で ssb_install() が再実行される。
  */
-define( 'SSB_DB_VERSION', '1.6.0' );
+define( 'SSB_DB_VERSION', '1.7.0' );
 
 /**
  * バージョンを保存するオプション名.
@@ -145,11 +145,16 @@ function ssb_get_schema() {
 		status varchar(20) NOT NULL DEFAULT 'pending',
 		stripe_session_id varchar(255) DEFAULT NULL,
 		stripe_payment_intent varchar(255) DEFAULT NULL,
+		stripe_refund_id varchar(255) DEFAULT NULL,
+		cancel_token varchar(64) DEFAULT NULL,
+		cancelled_by varchar(20) DEFAULT NULL,
 		created_at datetime DEFAULT NULL,
 		paid_at datetime DEFAULT NULL,
+		cancelled_at datetime DEFAULT NULL,
 		PRIMARY KEY  (id),
 		UNIQUE KEY stripe_session_id (stripe_session_id),
-		KEY slot_id (slot_id)
+		KEY slot_id (slot_id),
+		KEY cancel_token (cancel_token)
 	) {$charset_collate};";
 
 	return $schema;
@@ -229,6 +234,10 @@ function ssb_get_managed_pages() {
 		'booking/done' => array(
 			'title'    => '予約完了',
 			'template' => 'page-checkout-done.php',
+		),
+		'booking/cancel' => array(
+			'title'    => '予約のキャンセル',
+			'template' => 'page-booking-cancel.php',
 		),
 		// 規約類は専用テンプレートを持たず、運営が管理画面で本文を編集する。
 		'terms'         => array(

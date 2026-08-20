@@ -187,6 +187,10 @@ function ssb_mail_booking_customer( $context ) {
 			array(
 				'',
 				'当日のご案内は、講師からご連絡いたします。',
+				'',
+				'ご都合が悪くなった場合は、下記からキャンセルできます（全額返金）。',
+				ssb_cancel_url( $context ),
+				'',
 				'ご不明な点がありましたら、本メールにご返信ください。',
 				'',
 				ssb_site_name(),
@@ -298,6 +302,100 @@ function ssb_mail_booking_confirmed( $context ) {
 	foreach ( $results as $to => $ok ) {
 		if ( ! $ok ) {
 			ssb_log( '予約確定メールの送信に失敗', array( 'booking_id' => $context->id, 'to' => $to ) );
+		}
+	}
+}
+
+/* -------------------------------------------------------------------------
+ * キャンセル
+ * ---------------------------------------------------------------------- */
+
+/**
+ * キャンセルを3者へ通知する.
+ *
+ * 講師宛てには取り消し用の .ics を添付し、カレンダーの予定を消せるようにする。
+ *
+ * @param object|null $context 予約の詳細（キャンセル後の状態）。
+ * @return void
+ */
+function ssb_mail_booking_cancelled( $context ) {
+	if ( ! $context ) {
+		return;
+	}
+
+	$by      = ssb_cancelled_by_label( (string) $context->cancelled_by );
+	$details = ssb_booking_mail_lines( $context );
+
+	// 受講者へ.
+	$customer = implode(
+		"\n",
+		array_merge(
+			array(
+				$context->name . ' 様',
+				'',
+				'下記のご予約をキャンセルし、全額を返金いたしました。',
+				'（' . $by . 'による手続きです）',
+				'',
+			),
+			$details,
+			array(
+				'',
+				'返金はご利用のカード会社を経由するため、明細に反映されるまで数日かかることがあります。',
+				'',
+				ssb_site_name(),
+			)
+		)
+	);
+
+	$ok_customer = wp_mail( $context->email, sprintf( '[%s] ご予約をキャンセルしました', ssb_site_name() ), $customer );
+
+	// 講師へ（取り消しの .ics 付き）.
+	$instructor = implode(
+		"\n",
+		array_merge(
+			array(
+				$context->instructor_name . ' 様',
+				'',
+				'下記の予約がキャンセルされました。（' . $by . 'による手続きです）',
+				'受講料は全額返金済みです。予約枠は再び予約可能な状態に戻しました。',
+				'',
+			),
+			$details,
+			array(
+				'',
+				'添付の invite.ics を開くと、カレンダーの予定を取り消せます。',
+				'',
+				ssb_site_name(),
+			)
+		)
+	);
+
+	ssb_pending_ics( ssb_build_invite_ics( $context, 'CANCEL' ) );
+	$ok_instructor = wp_mail( $context->instructor_email, sprintf( '[%s] 予約がキャンセルされました', ssb_site_name() ), $instructor );
+	ssb_pending_ics( '' );
+
+	// 運営へ.
+	$admin = implode(
+		"\n",
+		array_merge(
+			array(
+				'予約がキャンセルされ、全額返金しました。',
+				'',
+				'予約ID　　：' . (int) $context->id,
+				'実行者　　：' . $by,
+				'キャンセル：' . $context->cancelled_at,
+				'返金ID　　：' . $context->stripe_refund_id,
+				'',
+			),
+			$details
+		)
+	);
+
+	$ok_admin = wp_mail( ssb_admin_email(), sprintf( '[%s] 予約がキャンセルされました（#%d）', ssb_site_name(), (int) $context->id ), $admin );
+
+	foreach ( array( 'customer' => $ok_customer, 'instructor' => $ok_instructor, 'admin' => $ok_admin ) as $to => $ok ) {
+		if ( ! $ok ) {
+			ssb_log( 'キャンセル通知メールの送信に失敗', array( 'booking_id' => (int) $context->id, 'to' => $to ) );
 		}
 	}
 }
