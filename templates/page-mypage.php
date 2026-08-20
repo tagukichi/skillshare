@@ -19,10 +19,11 @@ if ( ! $ssb_me ) {
 }
 
 $ssb_tabs = array(
-	'profile' => 'プロフィール',
-	'courses' => '講座管理',
-	'slots'   => '予約枠',
-	'gcal'    => 'Googleカレンダー',
+	'profile'  => 'プロフィール',
+	'courses'  => '講座管理',
+	'slots'    => '予約枠',
+	'gcal'     => 'Googleカレンダー',
+	'bookings' => '予約一覧',
 );
 
 $ssb_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'profile';
@@ -682,6 +683,58 @@ get_header();
 			</form>
 		</div>
 	<?php endif; ?>
+
+<?php endif; ?>
+
+<?php if ( 'bookings' === $ssb_tab ) : ?>
+
+	<?php
+	$ssb_my_bookings = ssb_query_bookings(
+		array(
+			'instructor_id' => $ssb_me->id,
+			'status'        => 'paid',
+		)
+	);
+
+	// これからの予約を先に、近い順で。過去の予約はその後ろに新しい順で。
+	$ssb_nowstr  = current_time( 'mysql' );
+	$ssb_future  = array();
+	$ssb_past    = array();
+
+	foreach ( $ssb_my_bookings as $ssb_bk ) {
+		if ( $ssb_bk->start_at >= $ssb_nowstr ) {
+			$ssb_future[] = $ssb_bk;
+		} else {
+			$ssb_past[] = $ssb_bk;
+		}
+	}
+
+	usort( $ssb_future, static function ( $a, $b ) { return strcmp( $a->start_at, $b->start_at ); } );
+	usort( $ssb_past, static function ( $a, $b ) { return strcmp( $b->start_at, $a->start_at ); } );
+	?>
+
+	<h2 class="ssb-section__title">これからの予約</h2>
+
+	<?php if ( ! $ssb_future ) : ?>
+		<p class="ssb-muted">これからの予約はまだありません。</p>
+	<?php else : ?>
+		<?php
+		$ssb_list = $ssb_future;
+		require __DIR__ . '/parts/instructor-bookings.php';
+		?>
+	<?php endif; ?>
+
+	<?php if ( $ssb_past ) : ?>
+		<h2 class="ssb-section__title" style="margin-top:40px;">過去の予約</h2>
+		<?php
+		$ssb_list = $ssb_past;
+		require __DIR__ . '/parts/instructor-bookings.php';
+		?>
+	<?php endif; ?>
+
+	<p class="ssb-muted" style="font-size:0.85rem;">
+		決済が完了した予約のみを表示しています。
+	</p>
 
 <?php endif; ?>
 

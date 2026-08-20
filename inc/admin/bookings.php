@@ -115,32 +115,15 @@ function ssb_handle_export_bookings() {
 
 	check_admin_referer( 'ssb_export_bookings' );
 
-	$rows = ssb_query_bookings( ssb_admin_booking_filters() );
-
-	nocache_headers();
-	header( 'Content-Type: text/csv; charset=UTF-8' );
-	header( 'Content-Disposition: attachment; filename=ssb-bookings-' . wp_date( 'Ymd-His' ) . '.csv' );
-
-	$out = fopen( 'php://output', 'w' );
-
-	// BOM。これが無いと Excel が文字化けする。
-	fwrite( $out, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
-
-	fputcsv(
-		$out,
+	ssb_send_csv(
+		'bookings',
 		array(
 			'予約ID', '申込日時', '決済日時', 'ステータス', '講座', '講師', '講師メール',
 			'受講者名', '受講者メール', '金額', '開始日時', '終了日時',
 			'Stripeセッション', 'PaymentIntent', '相談内容',
-		)
+		),
+		array_map( 'ssb_booking_csv_row', ssb_query_bookings( ssb_admin_booking_filters() ) )
 	);
-
-	foreach ( $rows as $row ) {
-		fputcsv( $out, ssb_booking_csv_row( $row ) );
-	}
-
-	fclose( $out );
-	exit;
 }
 add_action( 'admin_post_ssb_export_bookings', 'ssb_handle_export_bookings' );
 
@@ -306,6 +289,141 @@ function ssb_admin_bookings_page() {
 			<?php endforeach; ?>
 			</tbody>
 		</table>
+
+		<h2 style="margin-top:40px;">移行用のエクスポート</h2>
+		<p class="description">
+			将来の作り直しに備えて、データを CSV で取り出せるようにしています。
+			講師の Googleカレンダー URL は、第三者に渡ると予定が閲覧できてしまうため出力しません。
+		</p>
+		<p>
+			<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( 'action', 'ssb_export_instructors', admin_url( 'admin-post.php' ) ), 'ssb_export_instructors' ) ); ?>">講師の CSV</a>
+			<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( 'action', 'ssb_export_courses', admin_url( 'admin-post.php' ) ), 'ssb_export_courses' ) ); ?>">講座の CSV</a>
+			<a class="button" href="<?php echo esc_url( $export_url ); ?>">予約・決済履歴の CSV</a>
+		</p>
 	</div>
 	<?php
 }
+
+/* -------------------------------------------------------------------------
+ * 移行用のエクスポート（SPEC 10）
+ * ---------------------------------------------------------------------- */
+
+/**
+ * CSV を送出して終了する.
+ *
+ * Excel でそのまま開けるよう UTF-8 の BOM を付ける。
+ *
+ * @param string                    $name   ファイル名の識別子。
+ * @param array<int,string>         $header 見出し行。
+ * @param array<int,array<int,string>> $rows データ行。
+ * @return void
+ */
+function ssb_send_csv( $name, $header, $rows ) {
+	nocache_headers();
+	header( 'Content-Type: text/csv; charset=UTF-8' );
+	header( 'Content-Disposition: attachment; filename=ssb-' . $name . '-' . wp_date( 'Ymd-His' ) . '.csv' );
+
+	$out = fopen( 'php://output', 'w' );
+
+	// BOM。これが無いと Excel が文字化けする。
+	fwrite( $out, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
+
+	fputcsv( $out, $header );
+
+	foreach ( $rows as $row ) {
+		fputcsv( $out, $row );
+	}
+
+	fclose( $out );
+	exit;
+}
+
+/**
+ * 講師を CSV で書き出す.
+ *
+ * ICS URL は書き出さない。第三者に渡ると予定が閲覧できてしまうため（SPEC 4.4）。
+ *
+ * @return void
+ */
+function ssb_handle_export_instructors() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html( '権限がありません。' ), 403 );
+	}
+
+	check_admin_referer( 'ssb_export_instructors' );
+
+	$rows = array();
+
+	foreach ( ssb_get_instructors() as $row ) {
+		$user = get_user_by( 'id', (int) $row->user_id );
+
+		$rows[] = array(
+			(string) $row->id,
+			ssb_instructor_status_label( $row->status ),
+			(string) $row->display_name,
+			(string) $row->email,
+			(string) (int) $row->user_id,
+			$user ? $user->user_login : '',
+			(string) $row->applied_at,
+			(string) $row->approved_at,
+			(string) $row->interview_at,
+			(string) $row->profile,
+			(string) $row->course_plan,
+			(string) $row->admin_note,
+			'' !== (string) $row->gcal_ics_url ? 'あり' : 'なし',
+		);
+	}
+
+	ssb_send_csv(
+		'instructors',
+		array(
+			'講師ID', 'ステータス', '表示名', '連絡先', 'WPユーザーID', 'WPユーザー名',
+			'申請日時', '承認日時', '面接日', '自己紹介', '希望する講座内容', '管理メモ',
+			'カレンダー連携',
+		),
+		$rows
+	);
+}
+add_action( 'admin_post_ssb_export_instructors', 'ssb_handle_export_instructors' );
+
+/**
+ * 講座を CSV で書き出す.
+ *
+ * @return void
+ */
+function ssb_handle_export_courses() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html( '権限がありません。' ), 403 );
+	}
+
+	check_admin_referer( 'ssb_export_courses' );
+
+	$rows = array();
+
+	foreach ( ssb_get_all_courses() as $row ) {
+		$rows[] = array(
+			(string) $row->id,
+			(string) $row->instructor_id,
+			(string) $row->instructor_name,
+			(string) $row->title,
+			ssb_course_status_label( $row->status ),
+			(string) (int) $row->price,
+			(string) (int) $row->duration_min,
+			(string) $row->description,
+			(string) $row->content,
+			(string) $row->target,
+			(int) $row->image_id ? (string) wp_get_attachment_url( (int) $row->image_id ) : '',
+			(string) $row->created_at,
+		);
+	}
+
+	ssb_send_csv(
+		'courses',
+		array(
+			'講座ID', '講師ID', '講師名', 'タイトル', '状態', '価格', '所要時間（分）',
+			'概要', '内容詳細', 'こんな方におすすめ', 'イメージ画像URL', '作成日時',
+		),
+		$rows
+	);
+}
+add_action( 'admin_post_ssb_export_courses', 'ssb_handle_export_courses' );
